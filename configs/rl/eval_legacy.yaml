@@ -1,0 +1,39 @@
+# Same as eval.yaml but for the OLD 3-agent checkpoint (runs/colab_run1, trained on configs/default.yaml:
+# 3 agents per team, original flag rules). Roles per team slot: attacker, defender, scout.
+#   python -m rl.evaluate --checkpoint runs/colab_run1/checkpoints/latest.pt --eval-config configs/rl/eval_legacy.yaml
+# The env stored in that checkpoint (3 agents, old rules) is used automatically.
+
+episodes: 200
+seed: 2026
+confidence: 0.95
+sides: [red, blue]
+policy_mode: argmax
+fixed_spawn_fraction: 0.0
+
+env_overrides:
+  spawn_mode: near_base
+
+route_roles: [attacker]
+
+opponents:
+  - {kind: random, label: random, params: {}}
+  - {kind: stay, label: stay, params: {}}
+  - kind: scripted
+    label: scripted_leash
+    params: {roles: [attacker, defender, scout], guard_mode: leash, guard_leash: 2, scout_behavior: random, chase_radius: 0, escort: false}
+  - kind: scripted
+    label: scripted_parked
+    params: {roles: [attacker, defender, scout], guard_mode: on_flag, guard_leash: 0, scout_behavior: stay, chase_radius: 0, escort: false}
+  - kind: scripted
+    label: scripted_chaser
+    params: {roles: [attacker, defender, scout], guard_mode: chaser, guard_leash: 0, scout_behavior: random, chase_radius: 4, escort: false}
+  - kind: minimax
+    label: minimax
+    params:
+      depth: 2
+      own_moves_per_agent: 2
+      enemy_moves_per_agent: 2
+      danger_radius: 3
+      max_nodes: 4000
+      alpha_beta: true
+      weights: {win: 1000.0, carry_progress: 4.0, pickup: 20.0, approach: 1.0, approach_others: 0.5, escort: 2.0, enemy_carry_progress: 4.0, enemy_pickup: 20.0, defend: 1.0, alive: 3.0, pressure: 1.5}

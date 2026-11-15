@@ -75,6 +75,21 @@ Opponent kinds (`random`, `stay`, `scripted`, `minimax`) are built from YAML ent
 `docs/minimax.md`). It is meant as a strong fixed evaluation opponent; it is also available in the viewer
 (`uv run python -m viz play --map configs/ctf_v2.yaml --red scripted --blue minimax`).
 
+## Evaluation
+
+`python -m rl.evaluate` measures a checkpoint without any training noise: opponents play exactly as scripted,
+the policy plays argmax actions, spawns are randomized from a fixed seed. Per opponent and side it reports
+win / draw / loss with Wilson 95% intervals plus behaviour metrics (pickups, conversion to captures, tags,
+STAY share, scout coverage, action histograms, heatmaps, route choice, defender distance). Settings live in
+`configs/rl/eval.yaml` (4-agent v2) and `configs/rl/eval_legacy.yaml` (the old 3-agent run); see
+[docs/evaluation.md](docs/evaluation.md).
+
+```bash
+uv run python -m rl.evaluate --checkpoint runs/<run>/checkpoints/latest.pt                       # 200 games per opponent
+uv run python -m rl.evaluate --checkpoint ... --opponents random scripted_chaser --set episodes=40  # quick look
+uv run python -m rl.evaluate --checkpoint runs/colab_run1/checkpoints/latest.pt --eval-config configs/rl/eval_legacy.yaml
+```
+
 ## Environment rules
 
 `configs/default.yaml` keeps the original rules (3 agents per team). `configs/ctf_v2.yaml` (same map, 4 agents per
@@ -117,7 +132,9 @@ All parameters have a single default in `src/ctf/config.py`; YAML files override
 
 ## Documentation
 
-Full Prototype 1 spec: [docs/environment.md](docs/environment.md)
+- Full Prototype 1 spec: [docs/environment.md](docs/environment.md)
+- Evaluation: [docs/evaluation.md](docs/evaluation.md)
+- Minimax opponent: [docs/minimax.md](docs/minimax.md)
 
 ## Layout
 

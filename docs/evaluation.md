@@ -8,7 +8,7 @@ are partly randomized (`opponent_noise`). They are good for watching learning, n
 
 * Opponents play exactly as scripted. The eval YAML has no `opponent_noise` key at all (unknown keys are errors).
 * The policy plays **argmax** actions by default (`policy_mode: argmax`, what the demo uses). `policy_mode: sampled`
-  draws from the policy like training did; running both is the argmax-vs-sampled check (B2b-2 automates it).
+  draws from the policy like training did; the argmax-vs-sampled check below runs both on the same games.
 * Spawns are randomized (`env_overrides.spawn_mode: near_base`, `fixed_spawn_fraction: 0.0`) but **seeded**: every
   episode's spawns and opponent randomness come from `Random(f"{seed}:{opponent}:{side}:{i}")`. The same config
   gives the same games, and two checkpoints evaluated with the same config face the same games, so they can be
@@ -48,6 +48,62 @@ The printed table is also saved as JSON (default `outputs/eval/<run>_<checkpoint
 
 Rates use Wilson intervals; means use `mean +- z * standard error`. The interval level is `confidence`.
 
+## Extra checks (held-out maps, role swap, argmax vs sampled)
+
+Configured by the `held_out`, `role_swap` and `policy_check` sections of the eval YAML (all keys required), run after
+the main table, printed below it and saved as top-level keys of the JSON (`held_out`, `role_swap`, `policy_check`;
+`null` when disabled, empty or skipped with `--skip held_out role_swap policy_check`). They never change the main
+table: its game seeds are untouched, so numbers measured before B2b-2 (for example the legacy baseline) are reproduced.
+
+**Held-out maps** (`held_out.maps`). Other 11x7 layouts from `configs/maps/` that the policy never saw in training
+(training uses the map of `configs/ctf_v2.yaml`, which equals `configs/maps/default.yaml`). Only `obstacles`, the two
+bases and the spawn cells are taken from the map file; rules, visibility, spawn mode and episode length stay those of
+the policy's environment. A map with a different width, height or `agents_per_team` is a clear error, which is why
+`eval_legacy.yaml` (3 agents) lists no maps. `held_out.opponents` picks which of the top-level opponents to play
+(leave minimax out: it is slow). JSON: `held_out[map][opponent][all|red|blue]`, same fields as the main table.
+
+**Role-swap sensitivity** (`role_swap`). The policy plays `role_swap.episodes` games per opponent. At every decision,
+for each pair `[A, B]` in `swaps`, the network is asked again with the roles of the whole team swapped (agents playing A
+are shown B and the other way round; BOTH the role one-hot in the input vector and the role-specific output head
+change; what the agent sees and `self_can_carry` do not). The result is the share of decisions whose argmax action
+changed (Wilson interval), per pair and overall. A policy that ignores its role scores 0. A pair passes when the share
+is at least `min_change_rate`. Read it with care: it proves the role input is *used*, not that it is used *well*
+(an untrained network already scores high, about 0.9 in a measurement on random weights); the meaningful evidence is
+the per-role behaviour (action histograms, heatmaps, defender distance). `min_change_rate` was set before any v2 policy
+was trained and is a sanity floor, not a calibrated threshold.
+
+**Argmax vs sampled** (`policy_check`). For each listed opponent the same seeded games are played once with argmax and
+once with sampled actions (sampling generator reseeded with `seed`). Reported: win/draw/loss for each mode, the
+difference `argmax win - sampled win` with a Newcombe interval (treats the samples as independent; the games are paired,
+so it is slightly conservative) and `top_action_prob`, the mean probability of the chosen-most-likely action
+(1.0 = deterministic policy). A big gap means the demo (argmax) plays differently from what training measured.
+
+## Noise-free evaluation during training (`noise_free_eval`)
+
+`configs/rl/default.yaml` has a `noise_free_eval` section. When `enabled`, the trainer pauses after the update that
+crosses each multiple of `every_steps` environment steps, plays the CURRENT policy through the same code as the CLI on
+the small eval YAML named in `config_path` (`configs/rl/eval_train.yaml`: 20 games per opponent, no minimax, two
+held-out maps, a short role-swap check, policy check off) and writes:
+
+* an event record `noise_free_eval` in `metrics.jsonl` (scalars `eval/win_rate/<opponent>`, `eval/mean_win_rate`,
+  `eval/min_win_rate`, `eval/stay_fraction`, `eval_held_out/...`, `eval/role_swap_changed`, `eval/seconds`) and the same
+  scalars to TensorBoard. They are event records on purpose: `viz.report` and every other reader of the update curve
+  skip them;
+* the full report as `<run>/eval/step_<steps>.json`;
+* one console line starting with `--> noise-free eval`.
+
+`at_end` adds one evaluation after the last update (after the final checkpoint is written). `overrides` changes values
+of the eval YAML (for example `{episodes: 40}`). The eval seed is fixed, so successive points use the same games.
+It does not disturb training: it uses its own random generators and restores the model's train/eval mode (a test
+trains the same seed with and without it and compares the weights). If an evaluation raises, the run prints the error,
+logs a `noise_free_eval_failed` event and keeps training. The eval YAML is loaded when the trainer is built, so a
+wrong path or a team-size mismatch stops the run before any training.
+Cost: one evaluation with `eval_train.yaml` took about 33 s on a single sandbox CPU core with an untrained 4-agent
+network (full 200-step games); it was not timed on Colab. Raise `every_steps` or lower `overrides.episodes` if it
+slows a run too much.
+Old checkpoints have no such section: they load with the hook off (`SECTION_COMPAT` in `rl/checkpoint.py`); a resumed
+run uses the setting of the YAML you pass.
+
 ## Opponents
 
 `configs/rl/eval.yaml` lists them: random, stay, four scripted variants (leash, parked, chaser, escort) and minimax.
@@ -66,6 +122,8 @@ The factory returns any `BaseStrategy`. An unregistered, non-built-in kind is a 
 
 * `src/rl/eval_config.py`  strict `EvalConfig` dataclasses (every key required).
 * `src/rl/eval_stats.py`   Wilson interval, normal mean interval.
-* `src/rl/evaluate.py`     episode runner (`play_episode`), recorder, `summarize`, `evaluate_policy`, report, CLI.
-* `configs/rl/eval.yaml`, `configs/rl/eval_legacy.yaml`
-* `tests/test_rl_evaluate.py`
+* `src/rl/evaluate.py`     episode runner (`play_episode`), recorder, `summarize`, `evaluate_policy`, held-out maps,
+  role-swap and argmax-vs-sampled checks (`evaluate_extras`), report, CLI.
+* `src/rl/train_eval.py`   the training hook (`NoiseFreeEvaluator`, `flatten_scalars`).
+* `configs/rl/eval.yaml`, `configs/rl/eval_legacy.yaml`, `configs/rl/eval_train.yaml` (the in-training one)
+* `tests/test_rl_evaluate.py`, `tests/test_rl_evaluate_checks.py`, `tests/test_rl_train_eval.py`

@@ -90,6 +90,13 @@ uv run python -m rl.evaluate --checkpoint ... --opponents random scripted_chaser
 uv run python -m rl.evaluate --checkpoint runs/colab_run1/checkpoints/latest.pt --eval-config configs/rl/eval_legacy.yaml
 ```
 
+After the main table the same command also runs three checks (configured in the same YAML, skip with
+`--skip held_out role_swap policy_check`): the policy on **held-out maps** (other 11x7 layouts from `configs/maps`),
+a **role-swap sensitivity check** (does the argmax action change when the role inputs are swapped?) and an
+**argmax-vs-sampled check**. Training can run a small version of the same evaluation every few hundred thousand
+steps (`noise_free_eval` in `configs/rl/default.yaml`, small settings in `configs/rl/eval_train.yaml`); its results are
+`noise_free_eval` events in `metrics.jsonl` and `eval/...` scalars in TensorBoard, kept apart from the noisy training curve.
+
 ## Environment rules
 
 `configs/default.yaml` keeps the original rules (3 agents per team). `configs/ctf_v2.yaml` (same map, 4 agents per

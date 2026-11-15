@@ -1,0 +1,51 @@
+# Small noise-free evaluation that runs DURING training (noise_free_eval in configs/rl/default.yaml
+# points here). Same strict schema as eval.yaml, but few episodes and no minimax so each run takes
+# about a minute instead of ten. The games are the same every time (same seed), so the curve over
+# training steps compares like with like. Use configs/rl/eval.yaml for the final numbers.
+
+episodes: 20             # per opponent (10 as RED + 10 as BLUE): a rough curve, not a measurement
+seed: 4242
+confidence: 0.95
+sides: [red, blue]
+policy_mode: argmax
+fixed_spawn_fraction: 0.0
+
+env_overrides:
+  spawn_mode: near_base
+
+route_roles: [attacker]
+
+opponents:
+  - {kind: random, label: random, params: {}}
+  - {kind: stay, label: stay, params: {}}
+  - kind: scripted
+    label: scripted_leash
+    params: {roles: [attacker, attacker, defender, scout], guard_mode: leash, guard_leash: 2, scout_behavior: random, chase_radius: 0, escort: false}
+  - kind: scripted
+    label: scripted_parked
+    params: {roles: [attacker, attacker, defender, scout], guard_mode: on_flag, guard_leash: 0, scout_behavior: stay, chase_radius: 0, escort: false}
+  - kind: scripted
+    label: scripted_chaser
+    params: {roles: [attacker, attacker, defender, scout], guard_mode: chaser, guard_leash: 0, scout_behavior: random, chase_radius: 4, escort: false}
+  - kind: scripted
+    label: scripted_escort
+    params: {roles: [attacker, attacker, defender, scout], guard_mode: leash, guard_leash: 3, scout_behavior: stay, chase_radius: 0, escort: true}
+
+held_out:
+  episodes: 10
+  opponents: [scripted_leash, scripted_chaser]
+  maps:
+    - {label: center_pillar, path: configs/maps/center_pillar.yaml}
+    - {label: two_corridors, path: configs/maps/two_corridors.yaml}
+
+role_swap:
+  enabled: true
+  episodes: 6
+  opponents: [scripted_chaser]
+  swaps: [[attacker, defender], [attacker, scout], [defender, scout]]
+  min_change_rate: 0.1
+
+policy_check:
+  enabled: false
+  episodes: 20
+  opponents: [scripted_chaser]

@@ -105,6 +105,12 @@ CONFIG_COMPAT: tuple[tuple[str, Any], ...] = (
     ("rewards.defender_intercept_potential", 0.0),
     ("rewards.scout_floor_fraction", 0.0),
 )
+# Whole sections added later: checkpoints written before them get the "off" value.
+SECTION_COMPAT: dict[str, dict[str, Any]] = {
+    "noise_free_eval": {
+        "enabled": False, "every_steps": 1, "at_end": False, "config_path": "configs/rl/eval_train.yaml", "overrides": {},
+    },
+}
 SCRIPTED_COMPAT: tuple[tuple[str, Any], ...] = (("chase_radius", 0), ("escort", False))
 
 
@@ -113,6 +119,8 @@ def migrate_config(plain: dict[str, Any]) -> dict[str, Any]:
     import copy
 
     cfg = copy.deepcopy(plain)
+    for section, default in SECTION_COMPAT.items():
+        cfg.setdefault(section, copy.deepcopy(default))
     for path, value in CONFIG_COMPAT:
         section, key = path.split(".")
         if isinstance(cfg.get(section), dict):

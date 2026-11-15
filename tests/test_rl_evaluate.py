@@ -19,7 +19,10 @@ from ctf.config import load_config  # noqa: E402
 from rl import evaluate as ev  # noqa: E402
 from rl.checkpoint import save_checkpoint  # noqa: E402
 from rl.config import load_base_env_config  # noqa: E402
-from rl.eval_config import EvalConfig, EvalOpponent, PolicyMode, Side, load_eval_config  # noqa: E402
+from rl.eval_config import (  # noqa: E402
+    EvalConfig, EvalOpponent, HeldOutConfig, HeldOutMap, PolicyCheckConfig, PolicyMode, RoleSwapConfig, Side,
+    load_eval_config,
+)
 from rl.eval_stats import mean_stat, rate, wilson_interval, z_value  # noqa: E402
 from rl.mappo import ValueNorm  # noqa: E402
 from rl.networks import ActorCritic, NetworkSpec  # noqa: E402
@@ -268,6 +271,9 @@ def _cfg(**kw) -> EvalConfig:
         episodes=6, seed=7, confidence=0.95, sides=[Side.RED, Side.BLUE], policy_mode=PolicyMode.ARGMAX,
         fixed_spawn_fraction=0.0, env_overrides={"spawn_mode": "near_base"}, route_roles=[Role.ATTACKER],
         opponents=[EvalOpponent("random", "random", {}), EvalOpponent("stay", "stay", {})],
+        held_out=HeldOutConfig(episodes=2, opponents=[], maps=[]),
+        role_swap=RoleSwapConfig(enabled=False, episodes=2, opponents=[], swaps=[], min_change_rate=0.1),
+        policy_check=PolicyCheckConfig(enabled=False, episodes=2, opponents=[]),
     )
     base.update(kw)
     return EvalConfig(**base)
@@ -362,7 +368,7 @@ def test_cli_writes_json_report(checkpoint, tmp_path, capsys) -> None:
     code = ev.main([
         "--checkpoint", str(checkpoint), "--eval-config", str(ROOT / "configs" / "rl" / "eval_legacy.yaml"),
         "--set", "episodes=4", "--opponents", "random", "scripted_chaser", "--out", str(out),
-        "--env-set", "max_episode_steps=15",
+        "--env-set", "max_episode_steps=15", "--skip", "held_out", "role_swap", "policy_check",
     ])
     assert code == 0
     data = json.loads(out.read_text())
@@ -371,6 +377,7 @@ def test_cli_writes_json_report(checkpoint, tmp_path, capsys) -> None:
     assert data["meta"]["env_config"]["max_episode_steps"] == 15
     assert data["results"]["random"]["all"]["n"] == 4
     assert "random" in capsys.readouterr().out
+    assert data["held_out"] is None and data["role_swap"] is None and data["policy_check"] is None
 
 
 def test_cli_reports_errors_with_exit_code_2(checkpoint, tmp_path, capsys) -> None:

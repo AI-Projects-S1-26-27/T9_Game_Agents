@@ -203,3 +203,10 @@ curriculum:
       weight: 0.5
       params: {}
       label: stay
+
+noise_free_eval:
+  enabled: false                   # periodic argmax / exact-opponent evaluation (rl.train_eval): the clean curve next to the noisy training win rate
+  every_steps: 500000              # run after the update that crosses each multiple of this
+  at_end: true                     # also once after the last update
+  config_path: configs/rl/eval_train.yaml   # small strict eval YAML (20 episodes per opponent, no minimax)
+  overrides: {}                    # e.g. {episodes: 40} on top of that file

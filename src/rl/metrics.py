@@ -88,6 +88,19 @@ class MetricsLogger:
         self._file.write(json.dumps(record) + "\n")
         self._file.flush()
 
+    def log_eval(self, step: int, scalars: dict[str, float]) -> None:
+        """Noise-free evaluation results. Written as an event record so training-curve readers (which only
+        read update records) ignore it; TensorBoard still gets every scalar."""
+        record = {"step": int(step), "time": time.time(), "event": "noise_free_eval",
+                  **{k: _clean(v) for k, v in scalars.items()}}
+        self._file.write(json.dumps(record) + "\n")
+        self._file.flush()
+        if self._tb is not None:
+            for key, value in scalars.items():
+                value = _clean(value)
+                if value is not None:
+                    self._tb.add_scalar(key, value, step)
+
     def close(self) -> None:
         self._file.close()
         if self._tb is not None:

@@ -48,3 +48,23 @@ def mean_stat(values: Sequence[float], confidence: float) -> dict[str, float | i
     se = math.sqrt(var / n)
     half = z_value(confidence) * se
     return {"n": n, "mean": mean, "se": se, "lo": mean - half, "hi": mean + half}
+
+
+def rate_difference(
+    successes_a: int, n_a: int, successes_b: int, n_b: int, confidence: float
+) -> dict[str, float | None]:
+    """``rate_a - rate_b`` with a Newcombe (hybrid score) interval built from the two Wilson intervals.
+
+    The two samples are treated as independent. Evaluating the same policy in two modes on the
+    same seeded games makes them positively correlated, so the true interval is a little
+    narrower than this one: read it as slightly conservative.
+    """
+    if n_a == 0 or n_b == 0:
+        return {"diff": None, "lo": None, "hi": None}
+    pa, pb = successes_a / n_a, successes_b / n_b
+    la, ua = wilson_interval(successes_a, n_a, confidence)
+    lb, ub = wilson_interval(successes_b, n_b, confidence)
+    diff = pa - pb
+    lo = diff - math.sqrt((pa - la) ** 2 + (ub - pb) ** 2)
+    hi = diff + math.sqrt((ua - pa) ** 2 + (pb - lb) ** 2)
+    return {"diff": diff, "lo": max(-1.0, lo), "hi": min(1.0, hi)}

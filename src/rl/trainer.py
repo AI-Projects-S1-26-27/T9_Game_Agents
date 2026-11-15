@@ -16,6 +16,7 @@ from rl.mappo import MAPPO, ValueNorm
 from rl.metrics import MetricsLogger, summarize_episodes
 from rl.networks import ActorCritic, NetworkSpec
 from rl.rollout import collect
+from rl.train_eval import NoiseFreeEvaluator
 from rl.vec_env import make_vec_env
 
 
@@ -53,6 +54,8 @@ class Trainer:
         self.curriculum = Curriculum(cfg.curriculum.phases)
         self.checkpoints = CheckpointManager(run_dir, cfg.run.keep_checkpoints)
         self.counters = {"total_steps": 0, "update": 0}
+        # Fails here, before any training, if the eval YAML is invalid.
+        self.evaluator = NoiseFreeEvaluator(cfg, env_config, run_dir) if cfg.noise_free_eval.enabled else None
         if resume_from is not None:
             payload = load_checkpoint(resume_from, map_location="cpu")
             self.counters = restore_training_state(
@@ -95,6 +98,21 @@ class Trainer:
         scalars["perf/steps_per_sec"] = sps
         return scalars
 
+    def _noise_free_eval(self, logger: MetricsLogger) -> None:
+        """One noise-free evaluation of the current policy. A failure is reported and training goes on:
+        a broken eval must not cost a multi-hour run."""
+        assert self.evaluator is not None
+        step = self.counters["total_steps"]
+        try:
+            scalars, report = self.evaluator.run(self.model, self.value_norm, step, self.device)
+            path = self.evaluator.save(report, step)
+        except Exception as exc:  # noqa: BLE001 - see docstring
+            print(f"noise-free eval FAILED at step {step:,}: {type(exc).__name__}: {exc}", flush=True)
+            logger.event(step, "noise_free_eval_failed", error=f"{type(exc).__name__}: {exc}")
+            return
+        logger.log_eval(step, scalars)
+        print(f"--> noise-free eval @ {step / 1e6:.3f}M | {self.evaluator.summary(scalars)} | {path}", flush=True)
+
     # --------------------------------------------------------------------- train
 
     def run(self) -> dict[str, int]:
@@ -109,6 +127,9 @@ class Trainer:
         next_checkpoint = (self.counters["total_steps"] // cfg.run.checkpoint_every_steps + 1) * (
             cfg.run.checkpoint_every_steps
         )
+        every = cfg.noise_free_eval.every_steps
+        next_eval = (self.counters["total_steps"] // every + 1) * every
+        last_eval_step = -1
         try:
             vec.set_phase(self.curriculum.index)
             obs = vec.reset()
@@ -148,7 +169,15 @@ class Trainer:
                 if self.counters["total_steps"] >= next_checkpoint:
                     self.checkpoints.save_periodic(self.counters["total_steps"], **self._state())
                     next_checkpoint += cfg.run.checkpoint_every_steps
+
+                if self.evaluator is not None and self.counters["total_steps"] >= next_eval:
+                    self._noise_free_eval(logger)
+                    last_eval_step = self.counters["total_steps"]
+                    while next_eval <= self.counters["total_steps"]:
+                        next_eval += every
             self.checkpoints.save_periodic(self.counters["total_steps"], **self._state())
+            if self.evaluator is not None and cfg.noise_free_eval.at_end and self.counters["total_steps"] != last_eval_step:
+                self._noise_free_eval(logger)  # after the final checkpoint is safely on disk
         except KeyboardInterrupt:
             print("\ninterrupted: saving checkpoint...", flush=True)
             self.checkpoints.save_periodic(self.counters["total_steps"], **self._state())

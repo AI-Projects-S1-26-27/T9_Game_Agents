@@ -47,3 +47,36 @@ opponents:
       weights: {win: 1000.0, carry_progress: 4.0, pickup: 20.0, approach: 1.0, approach_others: 0.5, escort: 2.0, enemy_carry_progress: 4.0, enemy_pickup: 20.0, defend: 1.0, alive: 3.0, pressure: 1.5}
   # classical AI and LLM opponents: add entries here once their kinds are registered in
   # rl.evaluate.EXTERNAL_OPPONENTS (docs/evaluation.md explains how).
+
+# --- extra checks -----------------------------------------------------------------------------
+# Held-out maps: other 11x7 layouts (configs/maps) the policy was never trained on (training uses the
+# map in configs/ctf_v2.yaml, which is the same as configs/maps/default.yaml). Only walls, bases and
+# spawn cells come from the map file; rules and everything else stay as in the policy's env config.
+# Opponent labels must exist in `opponents` above; minimax is left out because it is slow.
+held_out:
+  episodes: 40               # per (map, opponent), split over `sides`
+  opponents: [scripted_leash, scripted_parked, scripted_chaser, scripted_escort]
+  maps:
+    - {label: center_gate, path: configs/maps/center_gate.yaml}
+    - {label: center_pillar, path: configs/maps/center_pillar.yaml}
+    - {label: long_wall_south, path: configs/maps/long_wall_south.yaml}
+    - {label: open_field, path: configs/maps/open_field.yaml}
+    - {label: pillars, path: configs/maps/pillars.yaml}
+    - {label: two_corridors, path: configs/maps/two_corridors.yaml}
+
+# Role-swap sensitivity: at every decision the role inputs (one-hot + role head) of the named role
+# pairs are swapped and the argmax action is compared with the unswapped one. A policy that ignores
+# its role scores 0%. min_change_rate is the pass line per pair (an uncalibrated sanity floor: no v2
+# policy had been trained when it was set; tune it after the first Colab run).
+role_swap:
+  enabled: true
+  episodes: 20               # games played (per opponent) to collect decisions
+  opponents: [scripted_chaser, scripted_escort]
+  swaps: [[attacker, defender], [attacker, scout], [defender, scout]]
+  min_change_rate: 0.1
+
+# Argmax (what the demo plays) vs sampled actions (what training used), same seeded games.
+policy_check:
+  enabled: true
+  episodes: 40               # per opponent and mode
+  opponents: [scripted_leash, scripted_chaser, scripted_escort]

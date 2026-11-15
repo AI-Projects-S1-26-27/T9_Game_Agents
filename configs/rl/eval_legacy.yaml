@@ -37,3 +37,23 @@ opponents:
       max_nodes: 4000
       alpha_beta: true
       weights: {win: 1000.0, carry_progress: 4.0, pickup: 20.0, approach: 1.0, approach_others: 0.5, escort: 2.0, enemy_carry_progress: 4.0, enemy_pickup: 20.0, defend: 1.0, alive: 3.0, pressure: 1.5}
+
+# --- extra checks -----------------------------------------------------------------------------
+# Same keys as eval.yaml (see there). Held-out maps are empty here: configs/maps has 4-agent layouts
+# and this checkpoint plays 3 agents per team. Opponent labels must exist in `opponents` above.
+held_out:
+  episodes: 40
+  opponents: [scripted_leash]
+  maps: []
+
+role_swap:
+  enabled: true
+  episodes: 20
+  opponents: [scripted_chaser]
+  swaps: [[attacker, defender], [attacker, scout], [defender, scout]]
+  min_change_rate: 0.1
+
+policy_check:
+  enabled: true
+  episodes: 40
+  opponents: [scripted_leash, scripted_chaser]

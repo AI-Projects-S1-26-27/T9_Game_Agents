@@ -13,8 +13,10 @@ For each opponent and side the policy plays, the report gives win / draw / loss 
 intervals, and behaviour metrics: captures, time to first pickup, pickup-to-capture conversion, tags,
 STAY share, scout map coverage, per-role action histograms and position heatmaps, route choice
 (through which side of the centre column the attackers pass) and how far the defender stays from
-its own flag. Everything tunable lives in the eval YAML (``configs/rl/eval.yaml``); see
-docs/evaluation.md.
+its own flag. Three further checks are configured in the same YAML: held-out maps (other 11x7
+layouts from ``configs/maps``), a role-swap sensitivity check (does the argmax action change when
+the role inputs are swapped?) and an argmax-vs-sampled check. Everything tunable lives in the eval
+YAML (``configs/rl/eval.yaml``); see docs/evaluation.md.
 """
 
 from __future__ import annotations
@@ -40,9 +42,10 @@ from ctf.observations import ObservationMode, manhattan_cells
 from rl.canonical import ACTION_INDEX, NUM_ACTIONS
 from rl.config import OpponentSpec
 from rl.eval_config import EvalConfig, EvalOpponent, PolicyMode, Side, load_eval_config
-from rl.eval_stats import mean_stat, rate
+from rl.eval_stats import mean_stat, rate, rate_difference
+from rl.features import ROLE_ORDER
 from rl.opponents import KNOWN_KINDS, build_opponent
-from rl.schema import ConfigError, parse_override
+from rl.schema import ConfigError, parse_override, read_yaml, to_dict
 from strategies import BaseStrategy, Role
 
 ACTION_NAMES = [a.name for a in Action]
@@ -85,6 +88,30 @@ def is_mirror_symmetric(config: CTFConfig) -> bool:
         {(w - 1 - x, y) for x, y in config.obstacles} == set(config.obstacles)
         and (w - 1 - config.red_base[0], config.red_base[1]) == tuple(config.blue_base)
     )
+
+
+# Keys a held-out map file contributes. Everything else (rules, visibility, spawn mode, episode
+# length, carrier slots, ...) stays what the policy's own environment config says, so a held-out
+# result differs from the main result in the walls and base positions only.
+MAP_KEYS = ("obstacles", "red_base", "blue_base", "red_spawns", "blue_spawns")
+
+
+def held_out_env_config(base: CTFConfig, map_path: str | Path) -> CTFConfig:
+    """``base`` with the geometry (walls, bases, spawn cells) of the map file at ``map_path``."""
+    data = read_yaml(map_path)
+    for key in ("width", "height", "agents_per_team"):
+        if data.get(key) != getattr(base, key):
+            raise ConfigError(
+                f"held-out map {map_path}: {key} is {data.get(key)!r} but the policy's environment has "
+                f"{getattr(base, key)!r}; only layouts of the same size and team size can be used"
+            )
+    missing = [k for k in MAP_KEYS if k not in data]
+    if missing:
+        raise ConfigError(f"held-out map {map_path}: missing key(s) {missing}")
+    try:
+        return config_from_dict({**config_to_dict(base), **{k: data[k] for k in MAP_KEYS}})
+    except ValueError as exc:
+        raise ConfigError(f"held-out map {map_path} is invalid: {exc}") from exc
 
 
 # ---------------------------------------------------------------------------- per-episode data
@@ -288,6 +315,79 @@ def summarize(
 # --------------------------------------------------------------------------------- driver
 
 
+def _play_side(
+    learner: BaseStrategy,
+    roles: list[Role],
+    envs: dict[bool, CTFEnvironment],
+    cfg: EvalConfig,
+    opp: EvalOpponent,
+    side: Side,
+    episodes: int,
+    key_prefix: str,
+    symmetric: bool,
+) -> list[EpisodeRecord]:
+    """``episodes`` seeded games of ``learner`` (on ``side``) against ``opp``. Same key = same games."""
+    route_roles = set(cfg.route_roles)
+    records: list[EpisodeRecord] = []
+    for i in range(episodes):
+        draw = Random(f"{cfg.seed}:{key_prefix}{opp.label}:{side.value}:{i}")
+        fixed = draw.random() < cfg.fixed_spawn_fraction
+        env_seed, opp_seed = draw.randrange(2**31), draw.randrange(2**31)
+        opponent = build_eval_opponent(opp, envs[fixed].config, Random(opp_seed))
+        records.append(
+            play_episode(
+                envs[fixed], learner, roles, opponent, side.team, route_roles, env_seed,
+                mirrored=symmetric and side is Side.BLUE,
+            )
+        )
+    return records
+
+
+def _eval_envs(env_config: CTFConfig, cfg: EvalConfig) -> dict[bool, CTFEnvironment]:
+    return {
+        fixed: CTFEnvironment(eval_env_config(env_config, cfg.env_overrides, fixed_spawns=fixed))
+        for fixed in (True, False)
+    }
+
+
+def _select_opponents(cfg: EvalConfig, labels: list[str]) -> list[EvalOpponent]:
+    unknown = sorted(set(labels) - {o.label for o in cfg.opponents})
+    if unknown:
+        raise ConfigError(f"unknown opponent label(s) {unknown}; configured: {[o.label for o in cfg.opponents]}")
+    return [o for o in cfg.opponents if o.label in labels]
+
+
+def _run_matchups(
+    learner: BaseStrategy,
+    roles: list[Role],
+    env_config: CTFConfig,
+    cfg: EvalConfig,
+    opponents: list[EvalOpponent],
+    episodes_per_side: int,
+    key_prefix: str,
+    progress: Callable[[str], None] | None,
+    tag: str = "",
+) -> dict[str, Any]:
+    envs = _eval_envs(env_config, cfg)
+    role_names = list(dict.fromkeys(r.value for r in roles))
+    symmetric = is_mirror_symmetric(env_config)
+    results: dict[str, Any] = {}
+    for opp in opponents:
+        per_side: dict[str, list[EpisodeRecord]] = {}
+        for side in cfg.sides:
+            records = _play_side(learner, roles, envs, cfg, opp, side, episodes_per_side, key_prefix, symmetric)
+            per_side[side.value] = records
+            if progress:
+                wins = sum(r.outcome == "win" for r in records)
+                progress(f"  {tag}vs {opp.label:<18} as {side.value:<4} {wins}/{len(records)} wins")
+        everything = [r for recs in per_side.values() for r in recs]
+        block = {"all": summarize(everything, role_names, cfg.confidence, team_relative=symmetric)}
+        for side_name, recs in per_side.items():
+            block[side_name] = summarize(recs, role_names, cfg.confidence, team_relative=False)
+        results[opp.label] = block
+    return results
+
+
 def evaluate_policy(
     learner: BaseStrategy,
     roles: list[Role],
@@ -300,46 +400,221 @@ def evaluate_policy(
     """Play every configured opponent on every configured side; returns ``{label: {side|all: summary}}``."""
     if len(roles) != env_config.agents_per_team:
         raise ConfigError(f"policy has {len(roles)} roles but the env has {env_config.agents_per_team} agents per team")
-    opponents = cfg.opponents
-    if only:
-        unknown = sorted(set(only) - {o.label for o in opponents})
-        if unknown:
-            raise ConfigError(f"unknown opponent label(s) {unknown}; configured: {[o.label for o in opponents]}")
-        opponents = [o for o in opponents if o.label in only]
-    envs = {
-        fixed: CTFEnvironment(eval_env_config(env_config, cfg.env_overrides, fixed_spawns=fixed))
-        for fixed in (True, False)
-    }
-    role_names = list(dict.fromkeys(r.value for r in roles))
-    route_roles = set(cfg.route_roles)
+    opponents = _select_opponents(cfg, only) if only else cfg.opponents
+    return _run_matchups(learner, roles, env_config, cfg, opponents, cfg.episodes_per_side, "", progress)
+
+
+# ----------------------------------------------------------------- extra checks (held-out maps etc.)
+
+
+def evaluate_held_out(
+    learner: BaseStrategy,
+    roles: list[Role],
+    env_config: CTFConfig,
+    cfg: EvalConfig,
+    *,
+    progress: Callable[[str], None] | None = None,
+) -> dict[str, Any] | None:
+    """The configured opponents on each held-out map: ``{map: {opponent: {side|all: summary}}}``.
+
+    ``None`` when the config lists no held-out maps.
+    """
+    ho = cfg.held_out
+    if not ho.maps:
+        return None
+    opponents = _select_opponents(cfg, ho.opponents)
+    out: dict[str, Any] = {}
+    for held in ho.maps:
+        map_config = held_out_env_config(env_config, held.path)  # also fails early on a wrong-sized map
+        out[held.label] = _run_matchups(
+            learner, roles, map_config, cfg, opponents, ho.episodes // len(cfg.sides),
+            f"held_out:{held.label}:", progress, tag=f"[{held.label}] ",
+        )
+    return out
+
+
+class _RoleSwapProbe(BaseStrategy):
+    """Plays like ``inner`` while counting, per role pair, how often swapping the roles changes the argmax action."""
+
+    def __init__(self, inner: Any, roles: list[Role], pairs: list[tuple[Role, Role]]) -> None:
+        self.inner, self.roles, self.pairs = inner, roles, pairs
+        self.counts = {pair: [0, 0] for pair in pairs}  # pair -> [changed decisions, decisions]
+
+    def reset(self) -> None:
+        self.inner.reset()
+
+    def act(self, observation, team):
+        actions = self.inner.act(observation, team)
+        decision = self.inner.last_decision[team]
+        actual = self.inner.greedy_actions(team)
+        for a, b in self.pairs:
+            swapped = np.array(
+                [ROLE_ORDER.index(b if r is a else a if r is b else r) for r in self.roles], dtype=np.int64
+            )
+            alt = self.inner.greedy_actions(team, swapped)
+            for slot, role in enumerate(self.roles):
+                if decision.alive[slot] and role in (a, b):
+                    self.counts[(a, b)][1] += 1
+                    self.counts[(a, b)][0] += int(alt[slot] != actual[slot])
+        return actions
+
+
+def role_swap_check(
+    learner: Any,
+    roles: list[Role],
+    env_config: CTFConfig,
+    cfg: EvalConfig,
+    *,
+    progress: Callable[[str], None] | None = None,
+) -> dict[str, Any]:
+    """Does the policy use its role input? Swap roles in its inputs and count changed argmax actions.
+
+    The games are played by the policy itself (in the configured policy mode) against the
+    ``role_swap.opponents``; at every decision each configured pair of roles (A, B) is swapped for
+    the whole team (agents playing A are shown B, agents playing B are shown A; both the role
+    one-hot and the role-specific output head switch) and the argmax action is compared with the
+    unswapped argmax. A policy that ignores roles scores 0. Only the role inputs change: what an
+    agent sees and its ``self_can_carry`` flag stay as they were.
+    """
+    rs = cfg.role_swap
+    if not hasattr(learner, "greedy_actions"):
+        raise ConfigError("the role-swap check needs a neural policy (RLStrategy)")
+    pairs = [(a, b) for a, b in rs.swaps]
+    absent = sorted({r.value for pair in pairs for r in pair} - {r.value for r in roles})
+    if absent:
+        raise ConfigError(f"role_swap.swaps names role(s) {absent} that this policy's team does not have")
+    probe = _RoleSwapProbe(learner, roles, pairs)
+    envs = _eval_envs(env_config, cfg)
     symmetric = is_mirror_symmetric(env_config)
-    results: dict[str, Any] = {}
-    for opp in opponents:
-        per_side: dict[str, list[EpisodeRecord]] = {}
+    for opp in _select_opponents(cfg, rs.opponents):
         for side in cfg.sides:
-            records: list[EpisodeRecord] = []
-            for i in range(cfg.episodes_per_side):
-                key = f"{cfg.seed}:{opp.label}:{side.value}:{i}"
-                draw = Random(key)
-                fixed = draw.random() < cfg.fixed_spawn_fraction
-                env_seed, opp_seed = draw.randrange(2**31), draw.randrange(2**31)
-                opponent = build_eval_opponent(opp, envs[fixed].config, Random(opp_seed))
-                records.append(
-                    play_episode(
-                        envs[fixed], learner, roles, opponent, side.team, route_roles, env_seed,
-                        mirrored=symmetric and side is Side.BLUE,
-                    )
-                )
-            per_side[side.value] = records
+            _play_side(probe, roles, envs, cfg, opp, side, rs.episodes // len(cfg.sides), "role_swap:", symmetric)
             if progress:
+                progress(f"  role-swap games vs {opp.label:<18} as {side.value}")
+    per_pair: dict[str, Any] = {}
+    for (a, b), (changed, total) in probe.counts.items():
+        stat = rate(changed, total, cfg.confidence)
+        per_pair[f"{a.value}<->{b.value}"] = {
+            **stat, "passed": stat["rate"] is not None and stat["rate"] >= rs.min_change_rate,
+        }
+    all_changed = sum(c for c, _ in probe.counts.values())
+    all_total = sum(t for _, t in probe.counts.values())
+    return {
+        "episodes": rs.episodes,
+        "opponents": list(rs.opponents),
+        "min_change_rate": rs.min_change_rate,
+        "pairs": per_pair,
+        "all": rate(all_changed, all_total, cfg.confidence),
+        "passed": bool(per_pair) and all(p["passed"] for p in per_pair.values()),
+    }
+
+
+class _TopProbability(BaseStrategy):
+    """Wraps a policy and averages the probability of its most likely action over every decision."""
+
+    def __init__(self, inner: Any) -> None:
+        self.inner, self.total, self.count = inner, 0.0, 0
+
+    def reset(self) -> None:
+        self.inner.reset()
+
+    def act(self, observation, team):
+        actions = self.inner.act(observation, team)
+        decision = self.inner.last_decision[team]
+        top = decision.probs.max(axis=1)
+        self.total += float(top[decision.alive].sum())
+        self.count += int(decision.alive.sum())
+        return actions
+
+    @property
+    def mean(self) -> float | None:
+        return self.total / self.count if self.count else None
+
+
+def policy_mode_check(
+    learner: Any,
+    roles: list[Role],
+    env_config: CTFConfig,
+    cfg: EvalConfig,
+    *,
+    progress: Callable[[str], None] | None = None,
+) -> dict[str, Any]:
+    """The same policy on the same seeded games, once with argmax actions and once sampled.
+
+    Training sampled its actions, the demo plays argmax; a large gap means the demo behaviour is
+    not what was trained (or the policy is still very random). ``top_action_prob`` is the mean
+    probability of the most likely action (1.0 = fully deterministic policy). The policy's own
+    mode is restored afterwards.
+    """
+    pc = cfg.policy_check
+    if not hasattr(learner, "set_policy_mode"):
+        raise ConfigError("the policy check needs a neural policy (RLStrategy)")
+    original = bool(learner.deterministic)
+    envs = _eval_envs(env_config, cfg)
+    symmetric = is_mirror_symmetric(env_config)
+    out: dict[str, Any] = {}
+    try:
+        for opp in _select_opponents(cfg, pc.opponents):
+            modes: dict[str, Any] = {}
+            counts: dict[str, tuple[int, int]] = {}
+            for mode in (PolicyMode.ARGMAX, PolicyMode.SAMPLED):
+                learner.set_policy_mode(mode is PolicyMode.ARGMAX, seed=cfg.seed)
+                tracker = _TopProbability(learner)
+                records: list[EpisodeRecord] = []
+                for side in cfg.sides:
+                    records += _play_side(
+                        tracker, roles, envs, cfg, opp, side, pc.episodes // len(cfg.sides), "policy_check:", symmetric
+                    )
+                n = len(records)
                 wins = sum(r.outcome == "win" for r in records)
-                progress(f"  vs {opp.label:<18} as {side.value:<4} {wins}/{len(records)} wins")
-        everything = [r for recs in per_side.values() for r in recs]
-        block = {"all": summarize(everything, role_names, cfg.confidence, team_relative=symmetric)}
-        for side_name, recs in per_side.items():
-            block[side_name] = summarize(recs, role_names, cfg.confidence, team_relative=False)
-        results[opp.label] = block
-    return results
+                counts[mode.value] = (wins, n)
+                modes[mode.value] = {
+                    "win": rate(wins, n, cfg.confidence),
+                    "draw": rate(sum(r.outcome == "draw" for r in records), n, cfg.confidence),
+                    "loss": rate(sum(r.outcome == "loss" for r in records), n, cfg.confidence),
+                    "top_action_prob": tracker.mean,
+                }
+                if progress:
+                    progress(f"  policy check vs {opp.label:<18} {mode.value:<8} {wins}/{n} wins")
+            out[opp.label] = {
+                **modes,
+                "win_difference": rate_difference(*counts["argmax"], *counts["sampled"], cfg.confidence),
+            }
+    finally:
+        learner.set_policy_mode(original)
+    return out
+
+
+EXTRA_CHECKS = ("held_out", "role_swap", "policy_check")
+
+
+def evaluate_extras(
+    learner: Any,
+    roles: list[Role],
+    env_config: CTFConfig,
+    cfg: EvalConfig,
+    *,
+    skip: list[str] | None = None,
+    progress: Callable[[str], None] | None = None,
+) -> dict[str, Any]:
+    """Held-out maps, role-swap check and policy-mode check; a disabled or skipped one is ``None``."""
+    skip = skip or []
+    unknown = sorted(set(skip) - set(EXTRA_CHECKS))
+    if unknown:
+        raise ConfigError(f"unknown check(s) {unknown} to skip; valid: {list(EXTRA_CHECKS)}")
+    if len(roles) != env_config.agents_per_team:
+        raise ConfigError(f"policy has {len(roles)} roles but the env has {env_config.agents_per_team} agents per team")
+    return {
+        "held_out": None if "held_out" in skip else evaluate_held_out(learner, roles, env_config, cfg, progress=progress),
+        "role_swap": (
+            role_swap_check(learner, roles, env_config, cfg, progress=progress)
+            if cfg.role_swap.enabled and "role_swap" not in skip else None
+        ),
+        "policy_check": (
+            policy_mode_check(learner, roles, env_config, cfg, progress=progress)
+            if cfg.policy_check.enabled and "policy_check" not in skip else None
+        ),
+    }
 
 
 # ---------------------------------------------------------------------------------- report
@@ -396,6 +671,46 @@ def format_report(results: dict[str, Any], meta: dict[str, Any]) -> str:
     return "\n".join(lines)
 
 
+def format_extras(extras: dict[str, Any], meta: dict[str, Any]) -> str:
+    """Text for the held-out maps, role-swap check and policy-mode check (only those that were run)."""
+    lines: list[str] = []
+    held = extras.get("held_out")
+    if held:
+        lines += ["", f"held-out maps (maps the policy was not trained on; sides pooled; intervals {int(round(100 * meta['confidence']))}% Wilson)",
+                  f"  {'map':<18}{'opponent':<18}{'n':>5} {'win%':>6} {'win CI':>11} {'draw%':>6} {'loss%':>6}"]
+        for map_label, per_opp in held.items():
+            wins = []
+            for opp_label, block in per_opp.items():
+                s = block["all"]
+                wins.append(s["win"]["rate"])
+                lines.append(
+                    f"  {map_label:<18}{opp_label:<18}{s['n']:>5} {_pct(s['win'])} {_ci(s['win']):>11} "
+                    f"{_pct(s['draw'])} {_pct(s['loss'])}"
+                )
+            if wins:
+                lines.append(f"  {map_label:<18}{'(mean over opponents)':<18}{'':>5} {100 * sum(wins) / len(wins):6.1f}")
+    swap = extras.get("role_swap")
+    if swap:
+        lines += ["", f"role-swap check: share of decisions whose argmax action changes when roles are swapped "
+                      f"(a pair passes at >= {100 * swap['min_change_rate']:.0f}%; a policy that ignores roles scores 0)"]
+        for pair, stat in swap["pairs"].items():
+            lines.append(
+                f"  {pair:<22} {_pct(stat)}% {_ci(stat)} of {stat['n']:>6} decisions  {'PASS' if stat['passed'] else 'FAIL'}"
+            )
+        lines.append(f"  overall {'PASS' if swap['passed'] else 'FAIL'}: {_pct(swap['all'])}% of {swap['all']['n']} decisions changed")
+    check = extras.get("policy_check")
+    if check:
+        lines += ["", "argmax vs sampled actions (same seeded games; difference = argmax win% - sampled win%, approximate interval):",
+                  f"  {'opponent':<18}{'argmax win%':>12}{'sampled win%':>13}{'diff':>7} {'diff CI':>14}{'top-prob a/s':>14}"]
+        for label, c in check.items():
+            d = c["win_difference"]
+            diff = "  n/a" if d["diff"] is None else f"{100 * d['diff']:+6.1f}"
+            ci = "" if d["lo"] is None else f"[{100 * d['lo']:+5.0f},{100 * d['hi']:+5.0f}]"
+            top = f"{c['argmax']['top_action_prob']:.2f}/{c['sampled']['top_action_prob']:.2f}" if c["argmax"]["top_action_prob"] is not None else "n/a"
+            lines.append(f"  {label:<18}{_pct(c['argmax']['win']):>12}{_pct(c['sampled']['win']):>13}{diff:>7} {ci:>14}{top:>14}")
+    return "\n".join(lines)
+
+
 # ------------------------------------------------------------------------------------ CLI
 
 
@@ -408,7 +723,9 @@ def _parser() -> argparse.ArgumentParser:
                    help="override a CTFConfig key on top of the eval env_overrides, e.g. visibility_radius=6")
     p.add_argument("--set", action="append", default=[], dest="overrides", metavar="KEY=VALUE",
                    help="override an eval-config value by dotted path, e.g. episodes=40")
-    p.add_argument("--opponents", nargs="+", default=None, metavar="LABEL", help="only these opponent labels")
+    p.add_argument("--opponents", nargs="+", default=None, metavar="LABEL", help="only these opponent labels (main table only)")
+    p.add_argument("--skip", nargs="+", default=[], choices=list(EXTRA_CHECKS), metavar="CHECK",
+                   help=f"do not run these extra checks: {', '.join(EXTRA_CHECKS)}")
     p.add_argument("--out", default=None, help="JSON output (default: outputs/eval/<run>_<checkpoint>.json)")
     return p
 
@@ -439,10 +756,9 @@ def main(argv: list[str] | None = None) -> int:
         # Build every env once now so a bad override fails before any games are played.
         eval_env_config(base_env, cfg.env_overrides, fixed_spawns=False)
         t0 = time.time()
-        results = evaluate_policy(
-            strategy, list(strategy.roles), base_env, cfg, only=args.opponents,
-            progress=lambda msg: print(msg, flush=True),
-        )
+        say = lambda msg: print(msg, flush=True)  # noqa: E731
+        results = evaluate_policy(strategy, list(strategy.roles), base_env, cfg, only=args.opponents, progress=say)
+        extras = evaluate_extras(strategy, list(strategy.roles), base_env, cfg, skip=args.skip, progress=say)
     except (ConfigError, ValueError, FileNotFoundError, KeyError) as exc:
         print(f"evaluation error: {exc}", file=sys.stderr)
         return 2
@@ -458,18 +774,19 @@ def main(argv: list[str] | None = None) -> int:
         "confidence": cfg.confidence,
         "seconds": round(time.time() - t0, 1),
         "roles": [r.value for r in strategy.roles],
-        "eval_config": {**cfg.__dict__, "sides": [s.value for s in cfg.sides], "policy_mode": mode.value,
-                        "route_roles": [r.value for r in cfg.route_roles],
-                        "opponents": [o.__dict__ for o in cfg.opponents]},
+        "eval_config": to_dict(cfg),
         "env_config": config_to_dict(shown_env),
         "rl_config_name": strategy.config.run.name,
     }
     print()
     print(format_report(results, meta))
+    extra_text = format_extras(extras, meta)
+    if extra_text:
+        print(extra_text)
     ckpt = Path(args.checkpoint)
     out = Path(args.out) if args.out else Path("outputs/eval") / f"{ckpt.parent.parent.name}_{ckpt.stem}.json"
     out.parent.mkdir(parents=True, exist_ok=True)
-    out.write_text(json.dumps({"meta": meta, "results": results}, indent=2), encoding="utf-8")
+    out.write_text(json.dumps({"meta": meta, "results": results, **extras}, indent=2), encoding="utf-8")
     print(f"\nwrote {out}")
     return 0
 

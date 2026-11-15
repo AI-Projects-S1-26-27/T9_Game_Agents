@@ -86,7 +86,11 @@ def main(argv: list[str] | None = None) -> int:
 
     print(f"run: {run_dir}  device: {cfg.run.device}  envs: {cfg.rollout.num_envs}  "
           f"workers: {cfg.rollout.num_workers}  total steps: {cfg.rollout.total_steps:,}", flush=True)
-    trainer = Trainer(cfg, env_config, run_dir, resume_path)
+    try:
+        trainer = Trainer(cfg, env_config, run_dir, resume_path)
+    except (ConfigError, ValueError, FileNotFoundError) as exc:
+        print(f"config error: {exc}", file=sys.stderr)
+        return 2
     counters = trainer.run()
     print(f"finished at step {counters['total_steps']:,} (update {counters['update']})")
     return 0

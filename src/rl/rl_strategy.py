@@ -21,7 +21,7 @@ from ctf.observations import GlobalObservation, PartialTeamObservation, TeamObse
 from rl.canonical import ACTION_INDEX, NUM_ACTIONS
 from rl.checkpoint import load_policy
 from rl.config import RLConfig
-from rl.features import FeatureBuilder, ObservationLayout
+from rl.features import ROLE_ORDER, FeatureBuilder, ObservationLayout
 from rl.mappo import ValueNorm
 from rl.navigation import GridNav
 from rl.networks import ActorCritic
@@ -74,6 +74,10 @@ class RLStrategy(BaseStrategy):
         self._builders: dict[Team, FeatureBuilder] = {}
         self._last_t: dict[Team, int] = {}
         self.last_decision: dict[Team, Decision] = {}
+        self._last_inputs: dict[Team, tuple[torch.Tensor, ...]] = {}
+        names = (layout or ObservationLayout.current()).actor_vector
+        # column of each role's one-hot entry in the actor vector (-1: this network's layout has none)
+        self._role_columns = [names.index(f"role_{r.value}") if f"role_{r.value}" in names else -1 for r in ROLE_ORDER]
 
     @classmethod
     def from_checkpoint(
@@ -102,6 +106,13 @@ class RLStrategy(BaseStrategy):
         self._builders.clear()
         self._last_t.clear()
         self.last_decision.clear()
+        self._last_inputs.clear()
+
+    def set_policy_mode(self, deterministic: bool, seed: int | None = None) -> None:
+        """Switch between argmax and sampled actions; ``seed`` restarts the sampling generator."""
+        self.deterministic = deterministic
+        if seed is not None:
+            self._generator.manual_seed(seed)
 
     def _builder(self, team: Team) -> FeatureBuilder:
         if team not in self._builders:
@@ -126,6 +137,7 @@ class RLStrategy(BaseStrategy):
         vec = torch.from_numpy(feats.vec).to(self.device)
         mask = torch.from_numpy(feats.mask).to(self.device)
         roles = torch.from_numpy(feats.role_index).to(self.device)
+        self._last_inputs[team] = (grid, vec, mask, roles)
         with torch.no_grad():
             probs = self.model.policy(grid, vec, mask, roles).probs.cpu()
         if self.deterministic:
@@ -147,6 +159,28 @@ class RLStrategy(BaseStrategy):
         return actions
 
     # ------------------------------------------------------------------ insight
+
+    def greedy_actions(self, team: Team, role_index: np.ndarray | None = None) -> np.ndarray:
+        """Argmax action index (canonical order) per slot for the inputs of the last ``act`` call.
+
+        With ``role_index`` (indices into ``ROLE_ORDER``, one per slot) the network is asked again
+        as if each agent had that role: BOTH the role one-hot in the vector and the role-specific
+        output head are switched, everything else (what the agent sees) stays the same. Used by the
+        role-swap check in ``rl.evaluate``.
+        """
+        grid, vec, mask, roles = self._last_inputs[team]
+        if role_index is not None:
+            new_roles = torch.as_tensor(np.asarray(role_index), dtype=roles.dtype, device=self.device)
+            vec = vec.clone()
+            for col in self._role_columns:
+                if col >= 0:
+                    vec[:, col] = 0.0
+            for slot, role in enumerate(new_roles.tolist()):
+                if self._role_columns[role] >= 0:
+                    vec[slot, self._role_columns[role]] = 1.0
+            roles = new_roles
+        with torch.no_grad():
+            return self.model.policy(grid, vec, mask, roles).probs.argmax(dim=-1).cpu().numpy()
 
     def value(self, observation: GlobalObservation, team: Team) -> np.ndarray:
         """The critic's estimate (in reward units) for each of the team's agents."""

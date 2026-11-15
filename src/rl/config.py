@@ -145,6 +145,22 @@ class CurriculumConfig:
 
 
 @dataclass(frozen=True)
+class NoiseFreeEvalConfig:
+    """Periodic noise-free evaluation during training (see ``rl.train_eval``).
+
+    Training metrics come from games with sampled actions, ``opponent_noise`` and a curriculum
+    that changes the settings; this hook measures the current policy the way ``rl.evaluate`` does
+    (argmax actions, exactly scripted opponents, fixed seeds) so the curve is comparable over time.
+    """
+
+    enabled: bool
+    every_steps: int  # run after the update that crosses each multiple of this many environment steps
+    at_end: bool  # also run once after the last update (unless one just ran at that step)
+    config_path: str  # eval YAML (configs/rl/eval_train.yaml); strict, same schema as configs/rl/eval.yaml
+    overrides: dict[str, Any]  # dotted EvalConfig overrides, e.g. {"episodes": 40}
+
+
+@dataclass(frozen=True)
 class RLConfig:
     run: RunConfig
     env: EnvSection
@@ -155,6 +171,7 @@ class RLConfig:
     ppo: PPOConfig
     rollout: RolloutConfig
     curriculum: CurriculumConfig
+    noise_free_eval: NoiseFreeEvalConfig
 
     def __post_init__(self) -> None:
         _validate(self)
@@ -200,6 +217,9 @@ def _validate(cfg: RLConfig) -> None:
         labels = [o.label for o in ph.opponents]
         _check(all(re.fullmatch(r"[a-z0-9_]+", lab) for lab in labels), f"{loc}: opponent labels must match [a-z0-9_]+, got {labels}")
         _check(len(set(labels)) == len(labels), f"{loc}: opponent labels must be unique, got {labels}")
+    nf = cfg.noise_free_eval
+    _check(nf.every_steps >= 1, "noise_free_eval.every_steps must be >= 1")
+    _check(bool(nf.config_path) or not nf.enabled, "noise_free_eval.config_path must be set when enabled")
     capped = sum(ph.max_steps for ph in phases[:-1])
     _check(capped < r.total_steps, "phase max_steps (excluding the last phase) must be < rollout.total_steps")
 
@@ -248,6 +268,7 @@ __all__ = [
     "RLConfig",
     "PhaseConfig",
     "OpponentSpec",
+    "NoiseFreeEvalConfig",
     "load_rl_config",
     "load_base_env_config",
     "phase_env_config",

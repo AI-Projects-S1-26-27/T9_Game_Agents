@@ -38,6 +38,19 @@ class SpawnMode(str, Enum):
     NEAR_BASE = "near_base"
 
 
+class TaggingRule(str, Enum):
+    """When is a flag carrier tagged?
+
+    ANY_ENEMY  one active enemy on the carrier's cell is enough (original rule).
+    HEADCOUNT  active enemies on the cell must OUTNUMBER the active friendly non-carrier agents
+               on the same cell. A lone carrier loses to one enemy; a carrier with one escort
+               survives one enemy; two enemies beat a carrier with one escort.
+    """
+
+    ANY_ENEMY = "any_enemy"
+    HEADCOUNT = "headcount"
+
+
 @dataclass
 class CTFConfig:
     width: int = 11
@@ -55,9 +68,21 @@ class CTFConfig:
     blue_base: Cell = (9, 3)
     red_spawns: list[Cell] | None = None
     blue_spawns: list[Cell] | None = None
+    # --- flag rules (the defaults reproduce the original rules) ---------------------------------
+    # carrier_slots: 1-based team slots (R1/B1 = slot 1) allowed to pick up and carry the enemy
+    #   flag; null = every agent may. Other agents standing on a flag do nothing.
+    carrier_slots: list[int] | None = None
+    tagging_rule: TaggingRule = TaggingRule.ANY_ENEMY
+    # drop_flag_on_tag: a tagged carrier's flag stays on the cell where it was tagged (status
+    #   DROPPED) instead of going back to its base. The tagged carrier is eliminated either way.
+    drop_flag_on_tag: bool = False
+    # The two options below only matter when drop_flag_on_tag is true.
+    dropped_flag_enemy_pickup: bool = True    # an eligible enemy may pick a dropped flag up again
+    dropped_flag_return_on_touch: bool = True  # an active agent of the flag's own team on it sends it home
 
     def __post_init__(self) -> None:
         self.spawn_mode = SpawnMode(self.spawn_mode)
+        self.tagging_rule = TaggingRule(self.tagging_rule)
 
         if self.width < 1 or self.height < 1:
             raise ValueError("Grid width and height must be >= 1")
@@ -69,6 +94,22 @@ class CTFConfig:
             raise ValueError("visibility_radius must be >= 0")
         if self.spawn_radius < 0:
             raise ValueError("spawn_radius must be >= 0")
+
+        if self.carrier_slots is not None:
+            if not self.carrier_slots:
+                raise ValueError("carrier_slots must not be empty (use null to let every agent carry)")
+            if len(set(self.carrier_slots)) != len(self.carrier_slots):
+                raise ValueError(f"carrier_slots has duplicates: {self.carrier_slots}")
+            for slot in self.carrier_slots:
+                if not 1 <= slot <= self.agents_per_team:
+                    raise ValueError(
+                        f"carrier_slots entry {slot} is outside 1..{self.agents_per_team} (agents_per_team)"
+                    )
+        if self.drop_flag_on_tag and not (self.dropped_flag_enemy_pickup or self.dropped_flag_return_on_touch):
+            raise ValueError(
+                "drop_flag_on_tag needs dropped_flag_enemy_pickup or dropped_flag_return_on_touch, "
+                "otherwise a dropped flag could never move again"
+            )
 
         obstacle_set = set(self.obstacles)
         self._validate_cell("red_base", self.red_base)
@@ -180,6 +221,10 @@ class CTFConfig:
             return cells
         return rng.sample(self._near_base_pool(team), self.agents_per_team)
 
+    def can_carry(self, slot: int) -> bool:
+        """May the agent in 1-based team ``slot`` pick up and carry the enemy flag?"""
+        return self.carrier_slots is None or slot in self.carrier_slots
+
     def agent_ids(self) -> list[str]:
         ids = [f"R{i}" for i in range(1, self.agents_per_team + 1)]
         ids += [f"B{i}" for i in range(1, self.agents_per_team + 1)]
@@ -190,6 +235,7 @@ class CTFConfig:
 
 _CELL_FIELDS = {"red_base", "blue_base"}
 _CELL_LIST_FIELDS = {"obstacles", "red_spawns", "blue_spawns"}
+_INT_LIST_FIELDS = {"carrier_slots"}
 
 
 def _parse_cell(raw: Any, label: str) -> Cell:
@@ -230,6 +276,15 @@ def config_from_dict(data: dict[str, Any]) -> CTFConfig:
                 kwargs[name] = None if name != "obstacles" else []
             else:
                 kwargs[name] = [_parse_cell(c, name) for c in value]
+        elif name in _INT_LIST_FIELDS:
+            if value is None:
+                kwargs[name] = None
+            else:
+                if not isinstance(value, (list, tuple)) or not all(
+                    isinstance(v, int) and not isinstance(v, bool) for v in value
+                ):
+                    raise ValueError(f"{name} must be a list of integers or null, got {value!r}")
+                kwargs[name] = [int(v) for v in value]
         else:
             fld = known[name]
             kwargs[name] = _check_scalar(name, value, fld.default)
@@ -245,6 +300,8 @@ def config_to_dict(config: CTFConfig) -> dict[str, Any]:
             out[f.name] = list(value)
         elif f.name in _CELL_LIST_FIELDS:
             out[f.name] = None if value is None else [list(c) for c in value]
+        elif f.name in _INT_LIST_FIELDS:
+            out[f.name] = None if value is None else list(value)
         elif isinstance(value, Enum):
             out[f.name] = value.value
         else:

@@ -60,7 +60,9 @@ Validation: `width >= 1`, `height >= 1`; obstacle cells must lie inside the grid
 - Initial flag state: `FlagStatus.AT_BASE` at that team’s base coordinates.
 - Bases must be inside the grid and **not** on obstacles.
 
-There is no separate “dropped flag” state in Prototype 1—only **at base** or **carried**.
+A flag is **at base** or **carried**. With `drop_flag_on_tag` (§3.6b) it can also be **dropped**
+(`FlagStatus.DROPPED`): lying on the cell where its carrier was tagged. `configs/default.yaml` keeps the
+original rules, where a flag is only ever at base or carried.
 
 ### 3.5 Spawn Configuration
 
@@ -92,7 +94,27 @@ Construction fails if `near_base` cannot find `agents_per_team` valid cells.
 |-----------|----------------|-------------------------|
 | `tagging_enabled` | `true` | `true` |
 
-When enabled, an opposing active agent on the same cell as a flag carrier tags the carrier (see §7.4). The value is copied into `GameState.tagging_enabled` at reset.
+When enabled, a flag carrier is tagged according to `tagging_rule` (see §7.5). The value is copied into `GameState.tagging_enabled` at reset.
+
+### 3.6b Flag rules (v2)
+
+These keys default to the **original rules**, so `configs/default.yaml` and every older config behave exactly as before.
+`configs/ctf_v2.yaml` (same map as `default.yaml`) switches the new rules on.
+
+| Parameter | Default (code and `default.yaml`) | `configs/ctf_v2.yaml` | Meaning |
+|-----------|-----------------------------------|------------------------|---------|
+| `carrier_slots` | `null` | `[1]` | 1-based team slots (`R1`/`B1` = slot 1) allowed to pick up and carry the enemy flag; `null` = every agent. Other agents standing on a flag do nothing. The environment has no roles, so this is keyed to the slot index (the default RL layout is slot 1 = attacker, 2 = defender, 3 = scout). |
+| `tagging_rule` | `any_enemy` | `headcount` | `any_enemy`: one active enemy on the carrier's cell tags it. `headcount`: active enemies on the cell must **outnumber** the active friendly **non-carrier** agents on it. |
+| `drop_flag_on_tag` | `false` | `true` | `true`: a tagged carrier's flag stays on the cell where it was tagged (`DROPPED`). `false`: it goes back to its base. The tagged carrier is eliminated either way. |
+| `dropped_flag_enemy_pickup` | `true` | `true` | An eligible enemy (see `carrier_slots`) may pick a dropped flag up again. |
+| `dropped_flag_return_on_touch` | `true` | `true` | An active agent of the flag's **own** team on the dropped flag's cell sends it back to its base. |
+
+The last two keys only matter when `drop_flag_on_tag` is `true`; if it is, they must not both be `false` (a dropped flag could never move again).
+
+Consequences worth knowing under the v2 rules:
+
+- A lone carrier loses to one defender. Carrier + one escort beats one defender. Two defenders beat carrier + one escort. Any enemy agent counts as a tagger (a scout too), and any friendly non-carrier counts as an escort (a defender or scout too).
+- A parked defender no longer makes the flag unbeatable, but a team can only score with an agent whose slot is in `carrier_slots`. With `carrier_slots: [1]` and no respawn, **once a team's slot-1 agent is tagged that team can no longer win** (the best it can reach is a draw). Use `carrier_slots: [1, 2]` (two attackers) if the team should be able to recover.
 
 ### 3.7 Episode Length
 
@@ -187,7 +209,7 @@ Two modes are implemented.
 
 - Friendly agents (including eliminated ones) are always fully visible.
 - An enemy agent is visible only if it is active and within `visibility_radius` (Manhattan) of an **active** friendly agent. Eliminated agents see nothing.
-- The enemy flag is visible under the same rule; the team's own flag is always visible.
+- The enemy flag is visible under the same rule, whether it is at base, carried or **dropped**; the team's own flag is always visible. A team that did not see a flag being dropped therefore does not know where it lies until someone comes within `visibility_radius` of it.
 - Because the view is the union over all active teammates, whatever one agent (e.g. a scout) sees, the whole team sees.
 
 ---
@@ -198,37 +220,41 @@ Two modes are implemented.
 
 All active agents’ moves are proposed from the **same pre-step** positions, then applied together. Inactive agents stay fixed.
 
-### 7.2 Flag Pickup
+### 7.2 Flag Return (dropped flags only)
 
-After movement, an **active** agent that is **not** already carrying a flag may pick up the **enemy** flag if:
+Runs **before** pickups. If `dropped_flag_return_on_touch` is `true` and a flag is `DROPPED`, the first active agent (sorted ids) of the flag's own team that shares its cell sends it back: the flag becomes `AT_BASE` at its base coordinates and a `flag_return` event (`agent_id`, `flag_team`) is emitted. Standing on the cell counts, so a defender that tags a carrier and stays there returns the flag on the next step. Because returns run first, if a defender and an enemy attacker reach a dropped flag in the same step, the flag goes home and the attacker cannot pick it up.
 
-- Enemy flag status is `AT_BASE`, and
-- Agent shares the flag’s cell.
+### 7.3 Flag Pickup
 
-Effects: `agent.carrying_flag = True`; enemy flag becomes `CARRIED` with `carrier_id` set. A `flag_pickup` event is emitted.
+After movement (and returns), an **active** agent that is **not** already carrying a flag may pick up the **enemy** flag if:
 
-Agents are processed in dict iteration order (insertion order: `R1…Rn`, then `B1…Bn`). Only one pickup per flag per step is possible because after the first pickup the flag is no longer `AT_BASE`.
+- the agent's slot may carry (`carrier_slots`; always true when it is `null`),
+- the enemy flag is `AT_BASE`, or `DROPPED` with `dropped_flag_enemy_pickup` enabled, and
+- the agent shares the flag's cell.
 
-### 7.3 Flag Carrying
+Effects: `agent.carrying_flag = True`; enemy flag becomes `CARRIED` with `carrier_id` set. A `flag_pickup` event is emitted; picking up a dropped flag adds `"from_dropped": true` to it (the key is absent otherwise, so original events are unchanged).
+
+Agents are processed in dict iteration order (insertion order: `R1…Rn`, then `B1…Bn`). Only one pickup per flag per step is possible because after the first pickup the flag is no longer available.
+
+### 7.4 Flag Carrying
 
 While `CARRIED`, the flag’s `(x, y)` follows the carrier after movement (`_sync_carried_flag_positions`). The agent’s `carrying_flag` indicates it holds the **opponent’s** flag (only enemy pickup is implemented).
 
-### 7.4 Tagging
+### 7.5 Tagging
 
-When `tagging_enabled` is true: for each active carrier, if any **opposing** active agent shares the cell, the carrier is tagged:
+When `tagging_enabled` is true, each active carrier is checked according to `tagging_rule`.
 
-- Carrier: `active=False`, `carrying_flag=False`
-- A `tag` event is emitted (`agent_id`, `by_agent_id`, `flag_team` = the flag that was being carried — i.e. the **enemy team’s** flag identifier)
+**`any_enemy`** (original): carriers are scanned in agent dict order; if any **opposing** active agent shares the cell, the carrier is tagged, and the first such agent in dict order is recorded as `by_agent_id`. Teammates on the same cell do **not** matter. Carriers are handled one after another, so if two carriers meet on one cell only the first one scanned is tagged (it becomes inactive and can no longer tag the other).
 
-Carriers are scanned in agent dict order; the first opposing agent in dict order that shares the cell is recorded as `by_agent_id`.
+**`headcount`**: the carrier is tagged if the number of active enemies on its cell is **greater** than the number of active friendly agents on it that are not carrying a flag. All carriers are judged on the same snapshot, so two carriers that meet with no helpers are **both** tagged. `by_agent_id` is the lowest-id enemy on the cell.
 
-Teammates on the same cell do **not** cause tagging.
+Effects of a tag: carrier `active=False`, `carrying_flag=False`; a `tag` event (`agent_id`, `by_agent_id`, `flag_team` = the flag that was being carried — the **enemy team’s** flag identifier). With `drop_flag_on_tag` a `flag_drop` event (`agent_id`, `flag_team`, `x`, `y`) follows.
 
-### 7.5 Flag Reset
+### 7.6 Flag Reset
 
-When a carrier is tagged, the carried enemy flag returns to **`AT_BASE`** at its **original base coordinates** (from config).
+When a carrier is tagged and `drop_flag_on_tag` is `false`, the carried enemy flag returns to **`AT_BASE`** at its **original base coordinates** (from config). When it is `true`, the flag becomes `DROPPED` at the carrier's cell instead (see §7.2 and §7.3 for what happens next).
 
-### 7.6 Flag Return / Winning
+### 7.7 Capture / Winning
 
 After tagging, an **active** agent with `carrying_flag=True` on **its own base** cell wins:
 
@@ -238,7 +264,7 @@ After tagging, an **active** agent with `carrying_flag=True` on **its own base**
 
 “Capture” in the win sense means **returning the enemy flag to your base**, not merely touching the enemy flag.
 
-### 7.7 No Respawn
+### 7.8 No Respawn
 
 Tagged (inactive) agents remain inactive for the rest of the episode. No respawn mechanic exists.
 
@@ -251,16 +277,17 @@ Each call to `step()` applies this **fixed** sequence:
 1. **Parse actions** — validate ids and required active-agent actions.
 2. **Propose and apply movement** — simultaneous intent from pre-step positions.
 3. **Synchronize carried flag positions** — update coordinates for flags already carried.
-4. **Flag pickup** — enemy flag at base, same cell.
-5. **Tagging** — if enabled.
-6. **Scoring / win check** — carrier on own base.
-7. **Timestep increment** — `timestep += 1`.
-8. **Maximum-step truncation** — if `timestep >= max_episode_steps` and not already terminated: set `truncation=True`, `terminated=True`, `winner=None`, emit `episode_end` with `reason="max_steps"`.
+4. **Flag return** — dropped flags go home when an active agent of their own team is on them (v2 rules; no-op otherwise).
+5. **Flag pickup** — enemy flag at base (or dropped, if enabled), same cell, slot allowed to carry.
+6. **Tagging** — if enabled; `any_enemy` or `headcount`.
+7. **Scoring / win check** — carrier on own base.
+8. **Timestep increment** — `timestep += 1`.
+9. **Maximum-step truncation** — if `timestep >= max_episode_steps` and not already terminated: set `truncation=True`, `terminated=True`, `winner=None`, emit `episode_end` with `reason="max_steps"`.
 
 **Ordering implications:**
 
-- **Pickup → tag → score** on the same step.
-- A carrier who is tagged in phase 5 cannot score in phase 6 that same step.
+- **Return → pickup → tag → score** on the same step.
+- A carrier who is tagged in phase 6 cannot score in phase 7 that same step.
 - Example: pickup on the enemy base with a defender on the same cell can produce pickup then tag before any win check.
 
 Co-location of non-carriers is allowed throughout; only tagging special-cases carriers vs opponents.

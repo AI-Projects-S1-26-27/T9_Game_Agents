@@ -59,6 +59,17 @@ uv run tensorboard --logdir runs
 
 Ctrl+C saves a checkpoint before exiting, so a run can always be continued with `--resume latest`.
 
+## Environment rules
+
+`configs/default.yaml` keeps the original rules. `configs/ctf_v2.yaml` (same map) turns on the v2 flag rules:
+only slot 1 (the attacker) may carry the flag, a carrier is tagged only when enemies on its cell outnumber its
+non-carrier teammates there, and a tagged carrier's flag stays where it was tagged until its own team touches it
+(sends it home) or an eligible enemy picks it up. Every rule is a YAML key; see `docs/environment.md` section 3.6b.
+
+```bash
+uv run python -m viz play --map configs/ctf_v2.yaml --red scripted --blue random
+```
+
 ## Visualisation (`src/viz`)
 
 A viewer for replays and live play (every player labelled with its id and role), a map maker, GIF/MP4

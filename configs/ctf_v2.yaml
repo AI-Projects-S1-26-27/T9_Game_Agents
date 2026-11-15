@@ -1,0 +1,61 @@
+# Environment configuration with the v2 flag rules (same map as default.yaml).
+# Only the flag rules below differ from configs/default.yaml. Every key is listed explicitly;
+# unknown keys are rejected on load.
+
+# --- grid and rules -----------------------------------------------------------
+width: 11
+height: 7
+agents_per_team: 3
+tagging_enabled: true
+max_episode_steps: 200
+
+# --- reproducibility ----------------------------------------------------------
+# Seeds the environment's private RNG at construction. env.reset(seed=...) reseeds it.
+# Only matters when spawn_mode is not "fixed"; step() itself is always deterministic.
+seed: 42
+
+# --- partial observability ----------------------------------------------------
+# Manhattan radius within which a team sees enemies / the enemy flag.
+visibility_radius: 3
+
+# --- spawning -----------------------------------------------------------------
+# fixed      use red_spawns / blue_spawns below (or the cells nearest the base)
+# shuffle    same cells, randomly re-assigned among the team's agents each episode
+# near_base  random distinct home-zone cells within spawn_radius of the base
+spawn_mode: fixed
+spawn_radius: 3          # used by near_base
+spawn_allow_base: true   # near_base: may an agent start on its own flag cell?
+
+# --- map ----------------------------------------------------------------------
+red_base: [1, 3]
+blue_base: [9, 3]
+
+red_spawns:
+  - [1, 2]
+  - [1, 3]
+  - [1, 4]
+
+blue_spawns:
+  - [9, 2]
+  - [9, 3]
+  - [9, 4]
+
+obstacles:
+  - [5, 1]
+  - [5, 2]
+  - [5, 3]
+  - [5, 4]
+  - [5, 5]
+
+# --- flag rules (v2) ----------------------------------------------------------
+# Only slot 1 (R1 / B1, the attacker in the default RL layout) may pick up and carry the enemy
+# flag. The defender (slot 2) and scout (slot 3) standing on a flag do nothing.
+carrier_slots: [1]
+# A carrier is tagged only when active enemies on its cell outnumber the active friendly
+# non-carrier agents on that cell: lone attacker loses to one defender, attacker + scout beats
+# one defender, two defenders beat attacker + scout.
+tagging_rule: headcount
+# A tagged carrier is eliminated and the flag stays where it was tagged.
+drop_flag_on_tag: true
+dropped_flag_enemy_pickup: true      # an enemy attacker may pick the dropped flag up again
+dropped_flag_return_on_touch: true   # an active agent of the flag's own team touching it sends it home

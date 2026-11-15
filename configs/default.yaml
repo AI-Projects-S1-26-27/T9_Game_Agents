@@ -46,3 +46,19 @@ obstacles:
   - [5, 3]
   - [5, 4]
   - [5, 5]
+
+# --- flag rules ---------------------------------------------------------------
+# These keys default to the ORIGINAL rules; configs/ctf_v2.yaml turns the new rules on.
+# carrier_slots: 1-based team slots (R1/B1 = slot 1) that may pick up and carry the enemy flag.
+#   null = every agent may. Other agents standing on a flag do nothing.
+carrier_slots: null
+# tagging_rule: any_enemy = one active enemy on the carrier's cell tags it.
+#               headcount = active enemies on the cell must outnumber the active friendly
+#                           non-carrier agents on that cell.
+tagging_rule: any_enemy
+# drop_flag_on_tag: true = a tagged carrier's flag stays on that cell (status DROPPED);
+#                   false = it goes back to its base. The tagged carrier is eliminated either way.
+drop_flag_on_tag: false
+# Only used when drop_flag_on_tag is true:
+dropped_flag_enemy_pickup: true      # an eligible enemy may pick the dropped flag up again
+dropped_flag_return_on_touch: true   # an active agent of the flag's own team on it sends it home

@@ -127,7 +127,8 @@ class Viewer:
             return Geometry.from_meta(self.recording.meta)
         c = self.env_config
         return Geometry(c.width, c.height, set(c.obstacles), tuple(c.red_base), tuple(c.blue_base),
-                        list(c.default_spawns(Team.RED)), list(c.default_spawns(Team.BLUE)), c.visibility_radius, c.max_episode_steps)
+                        list(c.default_spawns(Team.RED)), list(c.default_spawns(Team.BLUE)), c.visibility_radius, c.max_episode_steps,
+                        tuple(c.carrier_slots or ()), c.tagging_rule.value, c.drop_flag_on_tag)
 
     def _controller(self, spec: ControllerSpec, seed: int) -> Controller:
         try:

@@ -180,6 +180,8 @@ class Session:
             visibility_radius=cfg.visibility_radius, max_steps=cfg.max_episode_steps,
             teams={t.value: c.label for t, c in self.controllers.items()},
             opponent=self.controllers[Team.BLUE].label, seed=self.seed, note=self.note,
+            carrier_slots=list(cfg.carrier_slots or []), tagging_rule=cfg.tagging_rule.value,
+            drop_flag_on_tag=cfg.drop_flag_on_tag,
         )
         return Recording(FORMAT_VERSION, meta, list(self.frames))
 

@@ -14,7 +14,10 @@ from viz.theme import ViewTeam, VizConfig, rgb
 
 ACTIONS = ["UP", "DOWN", "LEFT", "RIGHT", "STAY"]
 DELTA = {"UP": (0, -1), "DOWN": (0, 1), "LEFT": (-1, 0), "RIGHT": (1, 0), "STAY": (0, 0)}
-EVENT_LABEL = {"flag_pickup": "picked up the flag", "tag": "was tagged", "flag_capture": "captured the flag"}
+EVENT_LABEL = {
+    "flag_pickup": "picked up the flag", "tag": "was tagged", "flag_capture": "captured the flag",
+    "flag_drop": "dropped the flag", "flag_return": "sent the flag home",
+}
 Cell = tuple[int, int]
 
 
@@ -60,11 +63,22 @@ class Geometry:
     blue_spawns: list
     visibility_radius: int
     max_steps: int
+    # Flag rules, shown in the side panel. Defaults = the original rules.
+    carrier_slots: tuple = ()  # empty = every agent may carry
+    tagging_rule: str = "any_enemy"
+    drop_flag_on_tag: bool = False
 
     @classmethod
     def from_meta(cls, m: RecordingMeta) -> "Geometry":
         return cls(m.width, m.height, {tuple(c) for c in m.obstacles}, tuple(m.red_base), tuple(m.blue_base),
-                   [tuple(c) for c in m.red_spawns], [tuple(c) for c in m.blue_spawns], m.visibility_radius, m.max_steps)
+                   [tuple(c) for c in m.red_spawns], [tuple(c) for c in m.blue_spawns], m.visibility_radius, m.max_steps,
+                   tuple(m.carrier_slots), m.tagging_rule, m.drop_flag_on_tag)
+
+    def rules_text(self) -> str:
+        carry = "any agent carries" if not self.carrier_slots else "only slot " + "/".join(str(s) for s in self.carrier_slots) + " carries"
+        tag = "headcount tagging" if self.tagging_rule == "headcount" else "one enemy tags"
+        drop = "flag drops where tagged" if self.drop_flag_on_tag else "flag returns to base"
+        return f"{carry}  ·  {tag}  ·  {drop}"
 
     @classmethod
     def from_editor(cls, ed, radius: int, max_steps: int) -> "Geometry":
@@ -316,14 +330,20 @@ def _draw_board(surface, cfg: VizConfig, fonts: Fonts, lay: Layout, geo: Geometr
                     pygame.draw.line(layer, with_alpha(col, al), pts[i - 1], pts[i], max(2, cell // 14))
         surface.blit(layer, lay.board.topleft)
 
-    # flags at their bases (outlined "ghost" when taken)
+    # flags at their bases (outlined "ghost" when taken), plus a solid flag where one lies dropped
     for fl in frame.flags:
         st = cfg.team(fl.team)
+        away = fl.status in ("CARRIED", "DROPPED")
         base = geo.red_base if fl.team == "RED" else geo.blue_base
         r = cell_rect(lay, *base)
         size = cell * 0.36 * cfg.board.flag_scale
         pos = (r.x + cell * 0.2, r.y + cell * 0.55)
-        draw_flag(surface, *pos, size, rgb(st.light) if fl.status == "CARRIED" else rgb(st.color), outline=fl.status == "CARRIED")
+        draw_flag(surface, *pos, size, rgb(st.light) if away else rgb(st.color), outline=away)
+        if fl.status == "DROPPED" and (view.view_team is ViewTeam.NONE or not view.fog or fl.team.lower() == view.view_team.value
+                                       or (fl.x, fl.y) in visible_all):
+            dr = cell_rect(lay, fl.x, fl.y)
+            pygame.draw.circle(surface, rgb(cfg.palette.warn), dr.center, int(cell * 0.42), 2)
+            draw_flag(surface, dr.x + cell * 0.2, dr.y + cell * 0.55, size, rgb(st.color))
 
     # agents (selected on top)
     order = sorted(frame.agents, key=lambda a: (a.id == view.selected, a.active))
@@ -371,7 +391,8 @@ def _draw_board(surface, cfg: VizConfig, fonts: Fonts, lay: Layout, geo: Geometr
             if a is None:
                 continue
             cx, cy, rad = centers[a.id]
-            col = {"flag_pickup": rgb(cfg.palette.accent), "tag": rgb(cfg.palette.loss), "flag_capture": rgb(cfg.palette.win)}.get(kind, (255, 255, 255))
+            col = {"flag_pickup": rgb(cfg.palette.accent), "tag": rgb(cfg.palette.loss), "flag_capture": rgb(cfg.palette.win),
+                   "flag_drop": rgb(cfg.palette.warn), "flag_return": rgb(cfg.palette.draw)}.get(kind, (255, 255, 255))
             layer = _alpha(lay.board.size)
             pygame.draw.circle(layer, (*col, int(230 * (1 - t))), (cx - lay.board.x, cy - lay.board.y), int(rad + t * cell * 0.9), 4)
             surface.blit(layer, lay.board.topleft)
@@ -458,9 +479,9 @@ def draw_timeline(surface, cfg, fonts, lay, frames: list[Frame], index: int, vie
     pygame.draw.rect(surface, rgb(pal.panel_alt), track, border_radius=7)
     fill = track.copy(); fill.w = int(track.w * index / span)
     pygame.draw.rect(surface, rgb(pal.accent), fill, border_radius=7)
-    colors = {"flag_pickup": pal.accent, "tag": pal.loss, "flag_capture": pal.win}
+    colors = {"flag_pickup": pal.accent, "tag": pal.loss, "flag_capture": pal.win, "flag_return": pal.draw}
     for i, f in enumerate(frames):
-        for ev in (e for e in f.events if e["type"] in EVENT_LABEL):
+        for ev in (e for e in f.events if e["type"] in colors):
             x = track.x + int(track.w * i / span)
             pygame.draw.rect(surface, rgb(colors.get(ev["type"], pal.text)), pygame.Rect(x - 2, track.y - 7, 4, track.h + 14), border_radius=2)
     kx = track.x + int(track.w * index / span)
@@ -473,7 +494,7 @@ def draw_timeline(surface, cfg, fonts, lay, frames: list[Frame], index: int, vie
     text(surface, fonts.label_bold, f"{state}   x{speed:g}", (track.right + 16, track.centery), rgb(pal.text), "midleft")
     legend_y = lay.timeline.bottom - 20
     x = 14
-    for name, col in (("pickup", pal.accent), ("tag", pal.loss), ("capture", pal.win)):
+    for name, col in (("pickup", pal.accent), ("tag", pal.loss), ("capture", pal.win), ("return", pal.draw)):
         pygame.draw.rect(surface, rgb(col), pygame.Rect(x, legend_y - 6, 4, 14), border_radius=2)
         r = text(surface, fonts.tiny, name, (x + 9, legend_y), rgb(pal.text_dim), "midleft")
         x = r.right + 16
@@ -522,10 +543,13 @@ def draw_panel(surface, cfg, fonts, lay, geo: Geometry, meta: RecordingMeta | No
         flag = "enemy flag: at its base"
         if fl and fl.status == "CARRIED":
             flag = f"enemy flag: CARRIED by {fl.carrier}"
+        elif fl and fl.status == "DROPPED":
+            flag = f"enemy flag: DROPPED at ({fl.x},{fl.y})"
         pygame.draw.circle(surface, rgb(st.color), (x0 + 6, y + 8), 6)
         label = (meta.teams.get(team, "") if meta else view.live_labels.get(team, ""))
         text(surface, fonts.small_bold, f"{st.name}  {label}", (x0 + 18, y), rgb(st.light)); y += 17
         text(surface, fonts.tiny, f"{sum(a.active for a in mine)}/{len(mine)} active  ·  {flag}", (x0 + 18, y), rgb(pal.text_dim)); y += 18
+    text(surface, fonts.tiny, "Rules: " + geo.rules_text(), (x0, y), rgb(pal.text_dim)); y += 18
     y += 4
 
     heading("Players (click to select)"); y += 18

@@ -13,6 +13,7 @@ from ctf.map import GridMap
 class FlagStatus(str, Enum):
     AT_BASE = "AT_BASE"
     CARRIED = "CARRIED"
+    DROPPED = "DROPPED"  # lying on the cell where its carrier was tagged (only with drop_flag_on_tag)
 
 
 @dataclass(frozen=True)
@@ -38,6 +39,9 @@ class Flag:
             y=y,
             carrier_id=carrier_id,
         )
+
+    def with_dropped(self, x: int, y: int) -> "Flag":
+        return Flag(team=self.team, status=FlagStatus.DROPPED, x=x, y=y, carrier_id=None)
 
     def with_position(self, x: int, y: int) -> "Flag":
         return replace(self, x=x, y=y)

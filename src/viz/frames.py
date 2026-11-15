@@ -14,8 +14,11 @@ from typing import Any
 
 from rl.schema import ConfigError, from_dict, to_dict
 
-FORMAT_VERSION = 1
-MEANINGFUL_EVENTS = ("flag_pickup", "tag", "flag_capture")  # shown on timelines and in event logs
+FORMAT_VERSION = 2  # 2: flag rules in the meta (carrier slots, tagging rule, dropped flags); DROPPED status
+OLDEST_READABLE_VERSION = 1
+# Rules a version-1 recording was played under: the original ones.
+V1_RULE_DEFAULTS: dict[str, Any] = {"carrier_slots": [], "tagging_rule": "any_enemy", "drop_flag_on_tag": False}
+MEANINGFUL_EVENTS = ("flag_pickup", "tag", "flag_capture", "flag_return")  # timeline markers and event jumps
 
 
 @dataclass(frozen=True)
@@ -38,7 +41,7 @@ class AgentFrame:
 @dataclass(frozen=True)
 class FlagFrame:
     team: str
-    status: str  # "AT_BASE" | "CARRIED"
+    status: str  # "AT_BASE" | "CARRIED" | "DROPPED" (lying at x, y)
     x: int
     y: int
     carrier: str  # agent id or ""
@@ -70,6 +73,9 @@ class RecordingMeta:
     opponent: str
     seed: int
     note: str
+    carrier_slots: list[int]  # team slots allowed to carry the enemy flag; empty = every agent
+    tagging_rule: str  # "any_enemy" | "headcount"
+    drop_flag_on_tag: bool
 
 
 @dataclass(frozen=True)
@@ -105,6 +111,11 @@ class Recording:
         opener = gzip.open if path.suffix == ".gz" else open
         with opener(path, "rt", encoding="utf-8") as f:  # type: ignore[operator]
             data = json.load(f)
-        if data.get("format_version") != FORMAT_VERSION:
-            raise ConfigError(f"{path}: unsupported recording format {data.get('format_version')!r}")
+        version = data.get("format_version")
+        if not isinstance(version, int) or not OLDEST_READABLE_VERSION <= version <= FORMAT_VERSION:
+            raise ConfigError(f"{path}: unsupported recording format {version!r}")
+        if version < 2:  # migrate: version-1 recordings were all played under the original rules
+            for key, value in V1_RULE_DEFAULTS.items():
+                data["meta"].setdefault(key, value)
+            data["format_version"] = FORMAT_VERSION
         return from_dict(cls, data)

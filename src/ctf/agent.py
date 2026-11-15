@@ -20,6 +20,11 @@ class Agent:
     active: bool = True
     carrying_flag: bool = False
 
+    @property
+    def slot(self) -> int:
+        """1-based position of this agent within its team (``R2`` / ``B2`` -> 2)."""
+        return int(self.agent_id[1:])
+
     def with_position(self, x: int, y: int) -> "Agent":
         return replace(self, x=x, y=y)
 

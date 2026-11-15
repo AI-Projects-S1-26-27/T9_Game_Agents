@@ -48,3 +48,5 @@ Thumbs.db
 
 !.gitignore
 !runs/colab_run1/
+*.patch
+rl_*_files.zip

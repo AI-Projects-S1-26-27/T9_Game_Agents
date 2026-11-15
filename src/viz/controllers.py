@@ -2,7 +2,7 @@
 
 from __future__ import annotations
 
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 from pathlib import Path
 from random import Random
 from typing import Any
@@ -14,6 +14,7 @@ from rl.schema import ConfigError, from_dict, read_yaml
 from strategies import BaseStrategy
 
 KINDS = ("rl", *KNOWN_KINDS)
+ROLE_NAMES = ("attacker", "defender", "scout")
 
 
 class ControllerError(RuntimeError):
@@ -27,8 +28,15 @@ class ControllerSpec:
     checkpoint: str  # path to a .pt file (kind=rl); "" otherwise
     deterministic: bool  # rl: argmax instead of sampling
     params: dict[str, Any]
+    # Role label shown on each team slot for kinds that do not use roles themselves (random, stay).
+    # Display only: it changes how the players are labelled, never how they move. Scripted teams take
+    # their roles from params and RL teams from the checkpoint. Empty = show "unknown".
+    roles: list[str] = field(default_factory=list)
 
     def __post_init__(self) -> None:
+        bad = [r for r in self.roles if r not in ROLE_NAMES]
+        if bad:
+            raise ConfigError(f"controller {self.label!r}: unknown role(s) {bad}; valid roles: {list(ROLE_NAMES)}")
         if self.kind not in KINDS:
             raise ConfigError(f"controller {self.label!r}: kind must be one of {KINDS}, got {self.kind!r}")
         if self.kind == "rl" and not self.checkpoint:
@@ -72,6 +80,12 @@ class ControllerFactory:
         if spec.kind == "scripted":
             params = from_dict(ScriptedParams, spec.params)
             roles = [r.value for r in params.roles]
+        elif spec.roles:
+            if len(spec.roles) != n:
+                raise ControllerError(
+                    f"controller {spec.label!r}: roles lists {len(spec.roles)} slots but the map has {n} agents per team"
+                )
+            roles = list(spec.roles)
         else:
             roles = ["unknown"] * n
         return Controller(spec.label, strategy, roles, None, spec)

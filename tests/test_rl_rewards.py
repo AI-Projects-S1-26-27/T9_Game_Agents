@@ -16,7 +16,11 @@ STAY = Action.STAY
 
 def _zero_rewards(**keep):
     r = rl_config().rewards
-    zeroed = {f: 0.0 for f in r.__dataclass_fields__ if f != "scout_anneal_steps"}
+    skip = {"scout_anneal_steps", "escort_radius", "escort_roles", "outcome_share_attacker",
+            "outcome_share_defender", "outcome_share_scout"}
+    zeroed = {f: 0.0 for f in r.__dataclass_fields__ if f not in skip}
+    zeroed.update(escort_radius=0, escort_roles=[], outcome_share_attacker=1.0,
+                  outcome_share_defender=1.0, outcome_share_scout=1.0)
     zeroed.update(keep)
     return replace(r, **zeroed)
 

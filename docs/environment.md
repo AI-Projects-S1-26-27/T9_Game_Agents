@@ -37,7 +37,7 @@ Configuration is defined by `CTFConfig` and loaded with `load_config(path)` from
 - Agent IDs are assigned deterministically: `R1…Rn` for RED, `B1…Bn` for BLUE, where `n = agents_per_team`.
 - Each agent tracks: `agent_id`, `team`, position `(x, y)`, `active`, `carrying_flag`.
 
-**Default YAML:** 3 agents per team (`R1–R3`, `B1–B3`).
+**Default YAML:** 3 agents per team (`R1–R3`, `B1–B3`). `configs/ctf_v2.yaml` and `configs/maps/*.yaml` use 4 (`R1–R4`, `B1–B4`; slots 1–2 attackers, 3 defender, 4 scout in the default RL layout).
 
 ### 3.3 Grid and Obstacles
 
@@ -103,7 +103,7 @@ These keys default to the **original rules**, so `configs/default.yaml` and ever
 
 | Parameter | Default (code and `default.yaml`) | `configs/ctf_v2.yaml` | Meaning |
 |-----------|-----------------------------------|------------------------|---------|
-| `carrier_slots` | `null` | `[1]` | 1-based team slots (`R1`/`B1` = slot 1) allowed to pick up and carry the enemy flag; `null` = every agent. Other agents standing on a flag do nothing. The environment has no roles, so this is keyed to the slot index (the default RL layout is slot 1 = attacker, 2 = defender, 3 = scout). |
+| `carrier_slots` | `null` | `[1, 2]` | 1-based team slots (`R1`/`B1` = slot 1) allowed to pick up and carry the enemy flag; `null` = every agent. Other agents standing on a flag do nothing. The environment has no roles, so this is keyed to the slot index (the default RL layout is slots 1-2 = attackers, 3 = defender, 4 = scout). |
 | `tagging_rule` | `any_enemy` | `headcount` | `any_enemy`: one active enemy on the carrier's cell tags it. `headcount`: active enemies on the cell must **outnumber** the active friendly **non-carrier** agents on it. |
 | `drop_flag_on_tag` | `false` | `true` | `true`: a tagged carrier's flag stays on the cell where it was tagged (`DROPPED`). `false`: it goes back to its base. The tagged carrier is eliminated either way. |
 | `dropped_flag_enemy_pickup` | `true` | `true` | An eligible enemy (see `carrier_slots`) may pick a dropped flag up again. |
@@ -114,7 +114,7 @@ The last two keys only matter when `drop_flag_on_tag` is `true`; if it is, they 
 Consequences worth knowing under the v2 rules:
 
 - A lone carrier loses to one defender. Carrier + one escort beats one defender. Two defenders beat carrier + one escort. Any enemy agent counts as a tagger (a scout too), and any friendly non-carrier counts as an escort (a defender or scout too).
-- A parked defender no longer makes the flag unbeatable, but a team can only score with an agent whose slot is in `carrier_slots`. With `carrier_slots: [1]` and no respawn, **once a team's slot-1 agent is tagged that team can no longer win** (the best it can reach is a draw). Use `carrier_slots: [1, 2]` (two attackers) if the team should be able to recover.
+- A parked defender no longer makes the flag unbeatable, but a team can only score with an agent whose slot is in `carrier_slots`. With one carrier slot and no respawn, **once a team's last carrier-eligible agent is tagged that team can no longer win** (the best it can reach is a draw). `configs/ctf_v2.yaml` therefore has two carrier slots (`[1, 2]`): a second attacker can pick a dropped flag up again, or escort the first.
 
 ### 3.7 Episode Length
 

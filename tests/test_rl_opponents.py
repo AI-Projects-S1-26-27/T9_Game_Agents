@@ -17,6 +17,8 @@ SCRIPTED = {
     "guard_mode": "on_flag",
     "guard_leash": 0,
     "scout_behavior": "stay",
+    "chase_radius": 0,
+    "escort": False,
 }
 
 
@@ -26,6 +28,8 @@ def _params(**kw) -> ScriptedParams:
         guard_mode=GuardMode.ON_FLAG,
         guard_leash=0,
         scout_behavior=ScoutBehavior.STAY,
+        chase_radius=0,
+        escort=False,
     )
     base.update(kw)
     return ScriptedParams(**base)
@@ -47,7 +51,7 @@ def test_random_and_stay_return_valid_actions_for_active_agents_only() -> None:
     env = CTFEnvironment(cfg)
     env.reset()
     obs = env.observe(ObservationMode.PARTIAL, team=Team.RED)
-    for strat in (build_opponent(OpponentSpec("random", 1.0, {}), cfg, Random(0)), StayStrategy()):
+    for strat in (build_opponent(OpponentSpec("random", "random", 1.0, {}), cfg, Random(0)), StayStrategy()):
         acts = strat.act(obs, Team.RED)
         assert set(acts) == {"R1", "R2", "R3"} and all(isinstance(a, Action) for a in acts.values())
 
@@ -100,11 +104,11 @@ def test_defender_steps_toward_a_visible_enemy_carrier() -> None:
 def test_factory_validation() -> None:
     cfg = small_env_config()
     with pytest.raises(ConfigError, match="unknown opponent kind"):
-        build_opponent(OpponentSpec("wizard", 1.0, {}), cfg, Random(0))
+        build_opponent(OpponentSpec("wizard", "wizard", 1.0, {}), cfg, Random(0))
     with pytest.raises(ConfigError, match="takes no params"):
-        build_opponent(OpponentSpec("random", 1.0, {"x": 1}), cfg, Random(0))
+        build_opponent(OpponentSpec("random", "random", 1.0, {"x": 1}), cfg, Random(0))
     with pytest.raises(ConfigError, match="missing"):
-        build_opponent(OpponentSpec("scripted", 1.0, {"roles": ["attacker"] * 3}), cfg, Random(0))
+        build_opponent(OpponentSpec("scripted", "scripted", 1.0, {"roles": ["attacker"] * 3}), cfg, Random(0))
     with pytest.raises(ConfigError, match="roles"):
-        build_opponent(OpponentSpec("scripted", 1.0, {**SCRIPTED, "roles": ["attacker"]}), cfg, Random(0))
-    assert isinstance(build_opponent(OpponentSpec("scripted", 1.0, SCRIPTED), cfg, Random(0)), ScriptedTeamStrategy)
+        build_opponent(OpponentSpec("scripted", "scripted", 1.0, {**SCRIPTED, "roles": ["attacker"]}), cfg, Random(0))
+    assert isinstance(build_opponent(OpponentSpec("scripted", "scripted", 1.0, SCRIPTED), cfg, Random(0)), ScriptedTeamStrategy)

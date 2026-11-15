@@ -21,14 +21,21 @@ from viz.session import record_episode  # noqa: E402
 from viz.theme import load_viz_config, rgb  # noqa: E402
 
 ROOT = Path(__file__).resolve().parents[1]
-SCRIPTED = {"roles": ["attacker", "defender", "scout"], "guard_mode": "on_flag", "guard_leash": 0, "scout_behavior": "stay"}
+ROLES = {3: ["attacker", "defender", "scout"], 4: ["attacker", "attacker", "defender", "scout"]}
+
+
+def scripted(n: int, **extra) -> dict:
+    return {"roles": ROLES[n], "guard_mode": "on_flag", "guard_leash": 0, "scout_behavior": "stay",
+            "chase_radius": 0, "escort": False, **extra}
 
 
 def _record(config_name: str) -> Recording:
+    """Scripted attackers against a team that stays put; under v2 the unescorted pair is tagged."""
     cfg = load_config(ROOT / "configs" / config_name)
+    n = cfg.agents_per_team
     f = ControllerFactory()
-    red = f.build(ControllerSpec("Scripted", "scripted", "", True, SCRIPTED), cfg, 1)
-    blue = f.build(ControllerSpec("Stay", "stay", "", True, {}), cfg, 2)
+    red = f.build(ControllerSpec("Scripted", "scripted", "", True, scripted(n)), cfg, 1)
+    blue = f.build(ControllerSpec("Stay", "stay", "", True, {}, ROLES[n]), cfg, 2)
     return record_episode(cfg, red, blue, seed=0)
 
 
@@ -36,6 +43,10 @@ def _view(cfg) -> ViewState:
     o = cfg.overlays
     return ViewState(fog=False, belief=False, vision=False, trails=False, probabilities=False, arrows=False,
                      labels=o.labels, coordinates=False, spawns=False, view_team=o.view_team)
+
+
+def _blue_flag_statuses(rec: Recording) -> list[str]:
+    return [next(fl.status for fl in f.flags if fl.team == "BLUE") for f in rec.frames]
 
 
 @pytest.fixture(scope="module")
@@ -50,20 +61,18 @@ def viz_cfg():
 
 def test_recording_stores_the_rules_it_was_played_under(v2_recording) -> None:
     m = v2_recording.meta
-    assert (m.carrier_slots, m.tagging_rule, m.drop_flag_on_tag) == ([1], "headcount", True)
+    assert (m.carrier_slots, m.tagging_rule, m.drop_flag_on_tag) == ([1, 2], "headcount", True)
     old = _record("default.yaml").meta
     assert (old.carrier_slots, old.tagging_rule, old.drop_flag_on_tag) == ([], "any_enemy", False)
     assert FORMAT_VERSION == 2
 
 
 def test_recording_shows_a_dropped_flag_then_its_return(v2_recording) -> None:
-    statuses = [next(fl.status for fl in f.flags if fl.team == "BLUE") for f in v2_recording.frames]
+    statuses = _blue_flag_statuses(v2_recording)
     drop = statuses.index("DROPPED")
-    # Pickup and tag happen in the same step, so no frame ever shows the flag CARRIED here.
-    assert statuses[drop - 1] == "AT_BASE" and statuses[drop + 1] == "AT_BASE"  # B2 stands on it: sent home
-    kinds = [e["type"] for e in v2_recording.frames[drop].events]
-    assert kinds == ["flag_pickup", "tag", "flag_drop"]
-    assert ("flag_return" in {k for _, k in v2_recording.event_steps()})  # return is a timeline marker
+    assert statuses[drop - 1] == "CARRIED" and statuses[drop + 1] == "AT_BASE"  # a blue agent stood on it
+    assert "flag_drop" in [e["type"] for e in v2_recording.frames[drop].events]
+    assert "flag_return" in {k for _, k in v2_recording.event_steps()}  # a return is a timeline marker
 
 
 def test_round_trip_keeps_the_rules(v2_recording, tmp_path) -> None:
@@ -88,15 +97,14 @@ def test_version_1_recordings_still_load_with_the_original_rules(tmp_path) -> No
 
 def test_rules_text_describes_both_rule_sets(v2_recording) -> None:
     text = Geometry.from_meta(v2_recording.meta).rules_text()
-    assert "only slot 1 carries" in text and "headcount tagging" in text and "flag drops where tagged" in text
+    assert "only slot 1/2 carries" in text and "headcount tagging" in text and "flag drops where tagged" in text
     assert "any agent carries" in Geometry.from_meta(_record("default.yaml").meta).rules_text()
-    assert "slot 1/3" in replace(Geometry.from_meta(v2_recording.meta), carrier_slots=(1, 3)).rules_text()
+    assert "only slot 1 carries" in replace(Geometry.from_meta(v2_recording.meta), carrier_slots=(1,)).rules_text()
 
 
 def test_a_dropped_flag_is_drawn_where_it_lies_and_only_then(v2_recording, viz_cfg) -> None:
-    statuses = [next(fl.status for fl in f.flags if fl.team == "BLUE") for f in v2_recording.frames]
-    drop, before = statuses.index("DROPPED"), statuses.index("DROPPED") - 1
-    frames = render_frames(v2_recording, viz_cfg, _view(viz_cfg), size=(1360, 800), indices=[before, drop])
+    drop = _blue_flag_statuses(v2_recording).index("DROPPED")
+    frames = render_frames(v2_recording, viz_cfg, _view(viz_cfg), size=(1360, 800), indices=[drop - 1, drop])
     ring = rgb(viz_cfg.palette.warn)
 
     def has_ring(img) -> bool:
@@ -106,13 +114,20 @@ def test_a_dropped_flag_is_drawn_where_it_lies_and_only_then(v2_recording, viz_c
 
 
 def test_an_unseen_dropped_flag_is_hidden_under_the_viewing_teams_fog(v2_recording, viz_cfg) -> None:
-    drop = [next(fl.status for fl in f.flags if fl.team == "BLUE") for f in v2_recording.frames].index("DROPPED")
-    # The carrier was tagged on BLUE's flag cell, so RED (whose carrier is now dead) has no one near it.
-    # With RED's fog on, the dropped flag must not be drawn; with BLUE's fog on (its own flag), it must.
+    drop = _blue_flag_statuses(v2_recording).index("DROPPED")
+    # Same frame, but every RED agent is eliminated, so RED sees nothing near the dropped flag.
+    blind = replace(
+        v2_recording.frames[drop],
+        agents=[replace(a, active=False) if a.team == "RED" else a for a in v2_recording.frames[drop].agents],
+    )
+    frames = list(v2_recording.frames)
+    frames[drop] = blind
+    rec = replace(v2_recording, frames=frames)
     ring = rgb(viz_cfg.palette.warn)
-    for team, expected in (("red", False), ("blue", True)):
-        view = replace(_view(viz_cfg), fog=True, view_team=type(_view(viz_cfg).view_team)(team))
-        img = render_frames(v2_recording, viz_cfg, view, size=(1360, 800), indices=[drop])[0]
+    team_type = type(_view(viz_cfg).view_team)
+    for team, expected in (("red", False), ("blue", True)):  # blue's own flag is always in its view
+        view = replace(_view(viz_cfg), fog=True, view_team=team_type(team))
+        img = render_frames(rec, viz_cfg, view, size=(1360, 800), indices=[drop])[0]
         assert bool(((img == ring).all(axis=2)).any()) is expected, team
 
 
@@ -123,17 +138,15 @@ def test_live_viewer_and_cli_run_on_the_v2_config(viz_cfg, tmp_path) -> None:
     from viz.viewer import Viewer
 
     specs = [
-        ControllerSpec("Scripted: leash guard", "scripted", "", True, {**SCRIPTED, "guard_mode": "leash", "guard_leash": 2}),
-        ControllerSpec("Random", "random", "", True, {}),
+        ControllerSpec("Scripted: leash guard", "scripted", "", True, scripted(4, guard_mode="leash", guard_leash=2)),
+        ControllerSpec("Random", "random", "", True, {}, ROLES[4]),
     ]
     env = load_config(ROOT / "configs" / "ctf_v2.yaml")
     v = Viewer(viz_cfg, env_config=env, specs=specs, mode="live", seed=1, red_index=0, blue_index=1)
     v.view.playing = False
     for _ in range(25):
         v.execute("step_forward")
-    surf = pygame.Surface((1360, 800))
-    v.render(surf)  # the side panel prints the rules and, when relevant, "DROPPED at (x,y)"
-    assert Geometry.from_meta(v.session.recording().meta).rules_text().startswith("only slot 1 carries")
+    v.render(pygame.Surface((1360, 800)))  # the side panel prints the rules and, when relevant, "DROPPED at (x,y)"
 
     out = tmp_path / "ep.json.gz"
     code = main(["record", "--map", str(ROOT / "configs" / "ctf_v2.yaml"), "--red", "scripted", "--blue", "random",

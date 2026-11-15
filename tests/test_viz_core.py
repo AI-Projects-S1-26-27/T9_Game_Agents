@@ -19,7 +19,7 @@ from viz.theme import load_viz_config, rgb
 ROOT = Path(__file__).resolve().parents[1]
 VIZ_YAML = ROOT / "configs" / "viz" / "default.yaml"
 DEFAULT_MAP = ROOT / "configs" / "default.yaml"
-SCRIPTED = {"roles": ["attacker", "defender", "scout"], "guard_mode": "on_flag", "guard_leash": 0, "scout_behavior": "stay"}
+SCRIPTED = {"roles": ["attacker", "defender", "scout"], "guard_mode": "on_flag", "guard_leash": 0, "scout_behavior": "stay", "chase_radius": 0, "escort": False}
 
 
 def _editor(**kw) -> MapEditor:

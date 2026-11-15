@@ -59,10 +59,19 @@ uv run tensorboard --logdir runs
 
 Ctrl+C saves a checkpoint before exiting, so a run can always be continued with `--resume latest`.
 
+The shipped default trains on the v2 rules with **4 agents per team** (two attackers, a defender, a scout):
+`env.config_path: configs/ctf_v2.yaml`, `roles.slots: [attacker, attacker, defender, scout]`. Metrics are split
+per opponent label (`win_rate/opp_<label>`, `draw_rate/...`, `loss_rate/...`) and per spawn style
+(`win_rate/spawns_fixed|random`).
+
+Checkpoints from before the v2 rules (for example the 2M-step Colab run, 3 agents) still load for playing and
+for the viewer: features added later are simply not shown to the older network. They cannot be resumed or
+played on a 4-agent map. See `src/rl/checkpoint.py` (`migrate_config`, `ObservationLayout`).
+
 ## Environment rules
 
-`configs/default.yaml` keeps the original rules. `configs/ctf_v2.yaml` (same map) turns on the v2 flag rules:
-only slot 1 (the attacker) may carry the flag, a carrier is tagged only when enemies on its cell outnumber its
+`configs/default.yaml` keeps the original rules (3 agents per team). `configs/ctf_v2.yaml` (same map, 4 agents per
+team) turns on the v2 flag rules: only slots 1 and 2 (the attackers) may carry the flag, a carrier is tagged only when enemies on its cell outnumber its
 non-carrier teammates there, and a tagged carrier's flag stays where it was tagged until its own team touches it
 (sends it home) or an eligible enemy picks it up. Every rule is a YAML key; see `docs/environment.md` section 3.6b.
 

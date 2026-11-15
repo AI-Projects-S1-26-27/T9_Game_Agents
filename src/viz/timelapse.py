@@ -22,7 +22,7 @@ from viz.theme import VizConfig, rgb  # noqa: E402
 
 def list_checkpoints(run_dir: str | Path) -> list[tuple[int, str, Path]]:
     """(training step, phase name, path) for every saved checkpoint of a run, oldest first."""
-    from rl.checkpoint import load_checkpoint
+    from rl.checkpoint import load_checkpoint, migrate_config
     from rl.config import RLConfig
     from rl.schema import from_dict
 
@@ -30,8 +30,8 @@ def list_checkpoints(run_dir: str | Path) -> list[tuple[int, str, Path]]:
     for path in sorted((Path(run_dir) / "checkpoints").glob("*.pt")):
         if path.name == "latest.pt":
             continue
-        payload = load_checkpoint(path)
-        phases = from_dict(RLConfig, payload["config"]).curriculum.phases
+        payload = load_checkpoint(path, exact_layout=False)
+        phases = from_dict(RLConfig, migrate_config(payload["config"])).curriculum.phases
         found.append((int(payload["counters"]["total_steps"]), phases[int(payload["curriculum"]["index"])].name, path))
     return sorted(found)
 

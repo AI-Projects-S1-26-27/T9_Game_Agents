@@ -8,6 +8,7 @@ strict validation.
 
 from __future__ import annotations
 
+import re
 from dataclasses import dataclass
 from enum import Enum
 from pathlib import Path
@@ -67,8 +68,21 @@ class RewardsConfig:
     carry_step_penalty: float  # per step while carrying the flag (makes idling with it costly)
     defender_potential: float
     scout_new_cell: float
-    scout_anneal_steps: int  # scout bonus decays linearly to 0 over this many steps
+    scout_anneal_steps: int  # scout bonus decays linearly over this many steps ...
+    scout_floor_fraction: float  # ... down to this share of the full bonus (0 = fades out completely)
     step_penalty: float
+    # Share of the team outcome (win / loss / timeout) each role receives. Below 1 it lets the
+    # role-specific rewards matter more than the shared result.
+    outcome_share_attacker: float
+    outcome_share_defender: float
+    outcome_share_scout: float
+    # Escort: a non-carrying teammate of a flag carrier earns this per step while within
+    # `escort_radius` cells (Manhattan; 0 = same cell) of the carrier. Only roles in `escort_roles`.
+    escort_bonus: float
+    escort_radius: int
+    escort_roles: list[Role]
+    # Defender: per cell of path distance gained toward the nearest enemy flag carrier (when one exists).
+    defender_intercept_potential: float
 
 
 @dataclass(frozen=True)
@@ -107,6 +121,7 @@ class RolloutConfig:
 @dataclass(frozen=True)
 class OpponentSpec:
     kind: str
+    label: str  # metrics are split per label (win_rate/opp_<label>); unique within a phase
     weight: float
     params: dict[str, Any]
 
@@ -165,6 +180,11 @@ def _validate(cfg: RLConfig) -> None:
     _check(cfg.features.staleness_horizon >= 1, "features.staleness_horizon must be >= 1")
     _check(len(cfg.roles.slots) >= 1, "roles.slots must not be empty")
     _check(cfg.rewards.scout_anneal_steps >= 1, "rewards.scout_anneal_steps must be >= 1")
+    rw = cfg.rewards
+    _check(0.0 <= rw.scout_floor_fraction <= 1.0, "rewards.scout_floor_fraction must be in [0, 1]")
+    _check(rw.escort_radius >= 0, "rewards.escort_radius must be >= 0")
+    for name in ("outcome_share_attacker", "outcome_share_defender", "outcome_share_scout"):
+        _check(getattr(rw, name) >= 0.0, f"rewards.{name} must be >= 0")
 
     phases = cfg.curriculum.phases
     _check(len(phases) >= 1, "curriculum.phases must not be empty")
@@ -177,6 +197,9 @@ def _validate(cfg: RLConfig) -> None:
         _check(0.0 <= ph.opponent_noise <= 1.0, f"{loc}: opponent_noise must be in [0, 1]")
         _check(len(ph.opponents) >= 1, f"{loc}: needs at least one opponent")
         _check(all(o.weight > 0 for o in ph.opponents), f"{loc}: opponent weights must be > 0")
+        labels = [o.label for o in ph.opponents]
+        _check(all(re.fullmatch(r"[a-z0-9_]+", lab) for lab in labels), f"{loc}: opponent labels must match [a-z0-9_]+, got {labels}")
+        _check(len(set(labels)) == len(labels), f"{loc}: opponent labels must be unique, got {labels}")
     capped = sum(ph.max_steps for ph in phases[:-1])
     _check(capped < r.total_steps, "phase max_steps (excluding the last phase) must be < rollout.total_steps")
 

@@ -26,6 +26,7 @@ from rl.features import (
     CRITIC_CHANNELS,
     CRITIC_VECTOR,
     ROLE_ORDER,
+    ObservationLayout,
 )
 from rl.mappo import ValueNorm
 from rl.networks import ActorCritic, NetworkSpec
@@ -90,7 +91,53 @@ def save_checkpoint(
     os.replace(tmp, path)  # atomic: a crash never leaves a half-written checkpoint
 
 
-def load_checkpoint(path: str | Path, map_location: str | torch.device = "cpu") -> dict[str, Any]:
+# Settings added after the first checkpoints were written, with the value that reproduces the old
+# behaviour. Applied to a checkpoint's stored config when the key is missing, so old checkpoints
+# keep loading while the YAML schema still requires every key. Entries are (section.key, value).
+# Opponent labels (= the opponent's kind) and scripted-opponent params are handled in migrate_config.
+CONFIG_COMPAT: tuple[tuple[str, Any], ...] = (
+    ("rewards.outcome_share_attacker", 1.0),
+    ("rewards.outcome_share_defender", 1.0),
+    ("rewards.outcome_share_scout", 1.0),
+    ("rewards.escort_bonus", 0.0),
+    ("rewards.escort_radius", 0),
+    ("rewards.escort_roles", []),
+    ("rewards.defender_intercept_potential", 0.0),
+    ("rewards.scout_floor_fraction", 0.0),
+)
+SCRIPTED_COMPAT: tuple[tuple[str, Any], ...] = (("chase_radius", 0), ("escort", False))
+
+
+def migrate_config(plain: dict[str, Any]) -> dict[str, Any]:
+    """Return a copy of a stored RL config dict with settings added since it was written filled in."""
+    import copy
+
+    cfg = copy.deepcopy(plain)
+    for path, value in CONFIG_COMPAT:
+        section, key = path.split(".")
+        if isinstance(cfg.get(section), dict):
+            cfg[section].setdefault(key, value)
+    for phase in cfg.get("curriculum", {}).get("phases", []):
+        used: dict[str, int] = {}
+        for opp in phase.get("opponents", []):
+            if "label" not in opp:  # old runs lumped same-kind opponents: name them scripted, scripted_2, ...
+                used[opp["kind"]] = used.get(opp["kind"], 0) + 1
+                n = used[opp["kind"]]
+                opp["label"] = opp["kind"] if n == 1 else f"{opp['kind']}_{n}"
+            if opp["kind"] == "scripted":
+                for key, value in SCRIPTED_COMPAT:
+                    opp["params"].setdefault(key, value)
+    return cfg
+
+
+def load_checkpoint(
+    path: str | Path, map_location: str | torch.device = "cpu", *, exact_layout: bool = True
+) -> dict[str, Any]:
+    """Read a checkpoint. ``exact_layout=False`` also accepts one trained on fewer features.
+
+    Resuming training needs the exact layout (the network shapes must match). Playing a policy
+    does not: features added later are simply not shown to an older network.
+    """
     path = Path(path)
     if not path.exists():
         raise CheckpointError(f"checkpoint not found: {path}")
@@ -103,10 +150,15 @@ def load_checkpoint(path: str | Path, map_location: str | torch.device = "cpu") 
     saved, current = payload["obs_spec"], observation_spec()
     if saved != current:
         diff = sorted(k for k in current if saved.get(k) != current[k])
-        raise CheckpointError(
-            f"{path}: observation layout differs from the current code in {diff}; "
-            "this checkpoint was trained with a different feature set"
-        )
+        if exact_layout or any(k in diff for k in ("roles", "actions")):
+            raise CheckpointError(
+                f"{path}: observation layout differs from the current code in {diff}; "
+                "this checkpoint was trained with a different feature set"
+            )
+        try:  # an older, smaller feature set is fine for inference
+            ObservationLayout.from_spec(saved)
+        except ValueError as exc:
+            raise CheckpointError(f"{path}: {exc}; this checkpoint was trained with a different feature set") from exc
     return payload
 
 
@@ -135,13 +187,15 @@ def load_policy(
     path: str | Path, device: str | torch.device = "cpu"
 ) -> tuple[ActorCritic, dict[str, Any]]:
     """Rebuild the trained network for inference (no training state needed)."""
-    payload = load_checkpoint(path, map_location="cpu")
-    config = from_dict(RLConfig, payload["config"])
+    payload = load_checkpoint(path, map_location="cpu", exact_layout=False)
+    config = from_dict(RLConfig, migrate_config(payload["config"]))
     env_config = config_from_dict(payload["env_config"])
-    model = ActorCritic(NetworkSpec.from_env(env_config), config.model)
+    layout = ObservationLayout.from_spec(payload["obs_spec"])
+    model = ActorCritic(NetworkSpec.from_env(env_config, layout), config.model)
     model.load_state_dict(payload["model"])
     model.to(device).eval()
     meta = {
+        "layout": layout,
         "config": config,
         "env_config": env_config,
         "counters": payload["counters"],

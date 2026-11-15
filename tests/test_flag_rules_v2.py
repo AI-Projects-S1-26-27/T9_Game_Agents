@@ -307,19 +307,21 @@ def test_old_rules_any_agent_may_carry() -> None:
 def test_v2_yaml_loads_with_the_new_rules_and_the_default_map() -> None:
     v2 = load_config(ROOT / "configs" / "ctf_v2.yaml")
     old = load_config(ROOT / "configs" / "default.yaml")
-    assert v2.carrier_slots == [1]
+    assert v2.carrier_slots == [1, 2]
     assert v2.tagging_rule is TaggingRule.HEADCOUNT
     assert v2.drop_flag_on_tag is True
     # Same map and spawns as the original config.
-    for name in ("width", "height", "agents_per_team", "obstacles", "red_base", "blue_base",
-                 "red_spawns", "blue_spawns", "visibility_radius", "max_episode_steps", "spawn_mode"):
+    # v2 plays the same map with one more agent per team (two attackers, a defender and a scout)
+    assert (old.agents_per_team, v2.agents_per_team) == (3, 4)
+    for name in ("width", "height", "obstacles", "red_base", "blue_base",
+                 "visibility_radius", "max_episode_steps", "spawn_mode"):
         assert getattr(v2, name) == getattr(old, name), name
 
 
 def test_round_trip_keeps_the_new_keys() -> None:
     cfg = load_config(ROOT / "configs" / "ctf_v2.yaml")
     assert config_from_dict(config_to_dict(cfg)) == cfg
-    assert config_to_dict(cfg)["carrier_slots"] == [1]
+    assert config_to_dict(cfg)["carrier_slots"] == [1, 2]
     assert config_to_dict(CTFConfig())["carrier_slots"] is None
 
 

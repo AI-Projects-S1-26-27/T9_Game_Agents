@@ -5,7 +5,7 @@
 # --- grid and rules -----------------------------------------------------------
 width: 11
 height: 7
-agents_per_team: 3
+agents_per_team: 4
 tagging_enabled: true
 max_episode_steps: 200
 
@@ -30,15 +30,17 @@ spawn_allow_base: true   # near_base: may an agent start on its own flag cell?
 red_base: [1, 3]
 blue_base: [9, 3]
 
-red_spawns:
+red_spawns:  # slot 1, 2 attackers, slot 3 defender (on the flag), slot 4 scout
   - [1, 2]
-  - [1, 3]
   - [1, 4]
+  - [1, 3]
+  - [2, 3]
 
-blue_spawns:
+blue_spawns:  # mirror image of red_spawns
   - [9, 2]
-  - [9, 3]
   - [9, 4]
+  - [9, 3]
+  - [8, 3]
 
 obstacles:
   - [5, 1]
@@ -48,12 +50,12 @@ obstacles:
   - [5, 5]
 
 # --- flag rules (v2) ----------------------------------------------------------
-# Only slot 1 (R1 / B1, the attacker in the default RL layout) may pick up and carry the enemy
-# flag. The defender (slot 2) and scout (slot 3) standing on a flag do nothing.
-carrier_slots: [1]
+# Slots 1 and 2 (R1, R2 / B1, B2: the two attackers in the default RL layout) may pick up and carry
+# the enemy flag. The defender (slot 3) and scout (slot 4) standing on a flag do nothing.
+carrier_slots: [1, 2]
 # A carrier is tagged only when active enemies on its cell outnumber the active friendly
-# non-carrier agents on that cell: lone attacker loses to one defender, attacker + scout beats
-# one defender, two defenders beat attacker + scout.
+# non-carrier agents on that cell: a lone attacker loses to one defender, an attacker with one
+# escort beats one defender, two defenders beat an attacker with one escort.
 tagging_rule: headcount
 # A tagged carrier is eliminated and the flag stays where it was tagged.
 drop_flag_on_tag: true

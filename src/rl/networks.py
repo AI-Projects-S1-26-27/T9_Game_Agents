@@ -17,7 +17,7 @@ from torch.distributions import Categorical
 from ctf.config import CTFConfig
 from rl.canonical import NUM_ACTIONS
 from rl.config import ModelConfig
-from rl.features import ACTOR_CHANNELS, ACTOR_VECTOR, CRITIC_CHANNELS, CRITIC_VECTOR, ROLE_ORDER
+from rl.features import ROLE_ORDER, ObservationLayout
 
 
 @dataclass(frozen=True)
@@ -32,14 +32,16 @@ class NetworkSpec:
     num_roles: int
 
     @classmethod
-    def from_env(cls, env_config: CTFConfig) -> "NetworkSpec":
+    def from_env(cls, env_config: CTFConfig, layout: ObservationLayout | None = None) -> "NetworkSpec":
+        """Input sizes for ``layout`` (default: every current feature)."""
+        layout = layout or ObservationLayout.current()
         return cls(
-            actor_channels=len(ACTOR_CHANNELS),
-            critic_channels=len(CRITIC_CHANNELS),
+            actor_channels=len(layout.actor_channels),
+            critic_channels=len(layout.critic_channels),
             height=env_config.height,
             width=env_config.width,
-            actor_vec_dim=len(ACTOR_VECTOR),
-            critic_vec_dim=len(CRITIC_VECTOR),
+            actor_vec_dim=len(layout.actor_vector),
+            critic_vec_dim=len(layout.critic_vector),
             num_actions=NUM_ACTIONS,
             num_roles=len(ROLE_ORDER),
         )

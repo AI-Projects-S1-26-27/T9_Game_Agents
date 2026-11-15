@@ -76,7 +76,7 @@ class ControllerFactory:
         if spec.kind == "rl":
             return self._build_rl(spec, env_config, seed)
         rng = Random(seed)
-        strategy = build_opponent(OpponentSpec(spec.kind, 1.0, spec.params), env_config, rng)
+        strategy = build_opponent(OpponentSpec(spec.kind, spec.kind, 1.0, spec.params), env_config, rng)
         if spec.kind == "scripted":
             params = from_dict(ScriptedParams, spec.params)
             roles = [r.value for r in params.roles]
@@ -111,6 +111,7 @@ class ControllerFactory:
             strategy = RLStrategy(
                 model, meta["config"], env_config, value_norm,
                 deterministic=spec.deterministic, checkpoint_step=int(meta["counters"]["total_steps"]), seed=seed,
+                layout=meta["layout"],
             )
         except ValueError as exc:
             raise ControllerError(str(exc)) from exc

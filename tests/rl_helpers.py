@@ -9,12 +9,13 @@ from ctf.config import CTFConfig
 from rl.config import RLConfig, load_rl_config
 
 ROOT = Path(__file__).resolve().parents[1]
-DEFAULT_RL_YAML = ROOT / "configs" / "rl" / "default.yaml"
+# Mechanics tests run on the legacy 3-agent, original-rules setup; the shipped default has its own tests.
+DEFAULT_RL_YAML = ROOT / "tests" / "data" / "rl_legacy.yaml"
 OBSTACLES = [(5, 1), (5, 2), (5, 3), (5, 4), (5, 5)]
 
 
 def rl_config(**section_overrides) -> RLConfig:
-    """Default RL config with whole sections replaced, e.g. rewards=replace(cfg.rewards, ...)."""
+    """Legacy-layout RL config with whole sections replaced, e.g. rewards=replace(cfg.rewards, ...)."""
     cfg = load_rl_config(DEFAULT_RL_YAML)
     return replace(cfg, **section_overrides) if section_overrides else cfg
 

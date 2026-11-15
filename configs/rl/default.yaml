@@ -7,16 +7,16 @@ run:
   seed: 0
   device: cpu                      # cpu | cuda | mps | auto  (cpu is fastest for this tiny net)
   torch_threads: 2
-  checkpoint_every_steps: 500000
-  keep_checkpoints: 5              # newest periodic checkpoints kept (0 = keep all)
+  checkpoint_every_steps: 250000
+  keep_checkpoints: 0              # newest periodic checkpoints kept (0 = keep all; keeping all feeds the time-lapse)
   log_every_updates: 1
   tensorboard: true                # also write TensorBoard event files
 
 env:
-  config_path: configs/default.yaml  # base environment; phases override parts of it below
+  config_path: configs/ctf_v2.yaml   # base environment (v2 rules, 4 agents per team); phases override parts of it below
 
 roles:
-  slots: [attacker, defender, scout]  # role of agents 1,2,3 of a team (sorted ids)
+  slots: [attacker, attacker, defender, scout]  # role of agents 1..4 of a team (sorted ids); slots 1-2 are the env's carrier_slots
 
 features:
   mirror_blue: true                # BLUE sees the board flipped, so one policy plays both sides
@@ -35,8 +35,20 @@ rewards:
   carry_step_penalty: -0.02        # per step while carrying; stops 'grab the flag, then freeze'
   defender_potential: 0.02
   scout_new_cell: 0.05             # per newly seen cell (scout role only)
-  scout_anneal_steps: 3000000      # scout bonus fades linearly to 0 over this many steps
+  scout_anneal_steps: 3000000      # scout bonus fades linearly over this many steps ...
+  scout_floor_fraction: 0.3        # ... down to this share of the full bonus (0 = fade out completely)
   step_penalty: -0.002
+  # Share of the team outcome each role receives. Below 1 the role's own shaping matters more than the
+  # shared result, which counters free-riding (the old run's scout made the captures, the attacker idled).
+  outcome_share_attacker: 1.0
+  outcome_share_defender: 0.7
+  outcome_share_scout: 0.5
+  # A non-carrying teammate within escort_radius of a flag carrier (0 = same cell) earns this per step.
+  # The headcount rule makes a lone carrier lose to a single defender; an escort fixes that.
+  escort_bonus: 0.02
+  escort_radius: 0
+  escort_roles: [attacker, scout]
+  defender_intercept_potential: 0.06  # per cell gained toward the nearest enemy carrier (guarding: defender_potential)
 
 model:
   conv_channels: [16, 16]          # PPO update cost scales with this: [32,32,16]/256 is ~2.7x slower
@@ -63,7 +75,7 @@ rollout:
   num_envs: 16
   num_workers: 4                   # worker processes, at most num_envs; 0 = run in the main process (debugging)
   rollout_length: 128
-  total_steps: 10000000            # environment steps (one step = both teams moving once)
+  total_steps: 6000000             # environment steps (one step = both teams moving once)
 
 curriculum:
   learner_side: random             # red | blue | random, drawn per episode
@@ -73,8 +85,9 @@ curriculum:
     # Phase 1 teaches the whole task (grab the flag, run home, capture) with the opponents
     # starting in the far corners, away from their flag. Starting next to a guarded flag made
     # the agent learn "grab the flag, then freeze" (measured), so defenders arrive in phase 2.
+    # Opponent `label`s name the metric series (win_rate/opp_<label>); they must be unique per phase.
     - name: learn_the_task
-      max_steps: 1500000
+      max_steps: 1000000
       advance_win_rate: 0.7
       window_episodes: 200
       fixed_spawn_fraction: 0.0
@@ -82,14 +95,15 @@ curriculum:
       env_overrides:
         visibility_radius: 20      # larger than the map = full view
         spawn_mode: shuffle        # same cells, random assignment (corners are mirror-symmetric)
-        red_spawns: [[0, 0], [0, 6], [2, 0]]
-        blue_spawns: [[10, 0], [10, 6], [8, 0]]
+        red_spawns: [[0, 0], [0, 6], [2, 0], [2, 6]]
+        blue_spawns: [[10, 0], [10, 6], [8, 0], [8, 6]]
       opponents:
-        - {kind: stay, weight: 1.0, params: {}}
-        - {kind: random, weight: 1.0, params: {}}
+        - {kind: stay, label: stay, weight: 1.0, params: {}}
+        - {kind: random, label: random, weight: 1.0, params: {}}
 
+    # Phase 2: real guards, wide view. A parked guard can only be beaten by an escorted carrier.
     - name: handle_defenders
-      max_steps: 3000000
+      max_steps: 1500000
       advance_win_rate: 0.7
       window_episodes: 200
       fixed_spawn_fraction: 0.3
@@ -100,32 +114,42 @@ curriculum:
         spawn_allow_base: true
       opponents:
         - kind: scripted
+          label: scripted_leash
           weight: 2.0
-          params: {roles: [attacker, defender, scout], guard_mode: leash, guard_leash: 2, scout_behavior: random}
+          params: {roles: [attacker, attacker, defender, scout], guard_mode: leash, guard_leash: 2, scout_behavior: random, chase_radius: 0, escort: false}
         - kind: scripted
+          label: scripted_parked
           weight: 1.0
-          params: {roles: [attacker, defender, scout], guard_mode: on_flag, guard_leash: 0, scout_behavior: stay}
-        - {kind: random, weight: 1.0, params: {}}
+          params: {roles: [attacker, attacker, defender, scout], guard_mode: on_flag, guard_leash: 0, scout_behavior: stay, chase_radius: 0, escort: false}
+        - {kind: random, label: random, weight: 1.0, params: {}}
 
+    # Phase 3: the real setting (radius 3), every opponent style, including chasers and escorted attackers.
     - name: real_setting
-      max_steps: 5500000
+      max_steps: 3500000
       advance_win_rate: 1.0        # last phase: runs until rollout.total_steps
       window_episodes: 200
       fixed_spawn_fraction: 0.5
-      opponent_noise: 0.05
+      opponent_noise: 0.03
       env_overrides:
         visibility_radius: 3
         spawn_mode: near_base
         spawn_allow_base: true
       opponents:
         - kind: scripted
+          label: scripted_leash
           weight: 2.0
-          params: {roles: [attacker, defender, scout], guard_mode: leash, guard_leash: 2, scout_behavior: random}
+          params: {roles: [attacker, attacker, defender, scout], guard_mode: leash, guard_leash: 2, scout_behavior: random, chase_radius: 0, escort: false}
         - kind: scripted
+          label: scripted_parked
           weight: 1.0
-          params: {roles: [attacker, defender, scout], guard_mode: on_flag, guard_leash: 0, scout_behavior: stay}
+          params: {roles: [attacker, attacker, defender, scout], guard_mode: on_flag, guard_leash: 0, scout_behavior: stay, chase_radius: 0, escort: false}
         - kind: scripted
-          weight: 1.0
-          params: {roles: [attacker, attacker, defender], guard_mode: leash, guard_leash: 3, scout_behavior: stay}
-        - {kind: random, weight: 0.5, params: {}}
-        - {kind: stay, weight: 0.5, params: {}}
+          label: scripted_chaser
+          weight: 2.0
+          params: {roles: [attacker, attacker, defender, scout], guard_mode: chaser, guard_leash: 0, scout_behavior: random, chase_radius: 4, escort: false}
+        - kind: scripted
+          label: scripted_escort
+          weight: 2.0
+          params: {roles: [attacker, attacker, defender, scout], guard_mode: leash, guard_leash: 3, scout_behavior: stay, chase_radius: 0, escort: true}
+        - {kind: random, label: random, weight: 0.5, params: {}}
+        - {kind: stay, label: stay, weight: 0.5, params: {}}

@@ -25,7 +25,7 @@ from viz.theme import ViewTeam, load_viz_config, rgb  # noqa: E402
 from viz.viewer import Viewer  # noqa: E402
 
 ROOT = Path(__file__).resolve().parents[1]
-SCRIPTED = {"roles": ["attacker", "defender", "scout"], "guard_mode": "leash", "guard_leash": 2, "scout_behavior": "random"}
+SCRIPTED = {"roles": ["attacker", "defender", "scout"], "guard_mode": "leash", "guard_leash": 2, "scout_behavior": "random", "chase_radius": 0, "escort": False}
 SPECS = [
     ControllerSpec("Scripted A", "scripted", "", True, SCRIPTED),
     ControllerSpec("Scripted B", "scripted", "", True, {**SCRIPTED, "guard_mode": "on_flag", "guard_leash": 0}),
@@ -286,7 +286,8 @@ def test_cli_record_export_and_errors(cfg, tmp_path, capsys) -> None:
         {"label": s.label, "kind": s.kind, "checkpoint": s.checkpoint, "deterministic": True, "params": s.params} for s in SPECS]}))
     out = tmp_path / "ep.json.gz"
     base = ["--set", f"paths.output_dir={tmp_path / 'o'}"]
-    code = main(["record", "--controllers", str(ctrl), "--red", "Scripted A", "--blue", "Random", "--seed", "3",
+    legacy_map = str(Path(__file__).resolve().parents[1] / "configs" / "default.yaml")  # 3 agents, matches SPECS
+    code = main(["record", "--controllers", str(ctrl), "--map", legacy_map, "--red", "Scripted A", "--blue", "Random", "--seed", "3",
                  "--out", str(out), "--gif", str(tmp_path / "ep.gif"), *base])
     assert code == 0 and out.exists() and (tmp_path / "ep.gif").exists()
     rec = Recording.load(out)

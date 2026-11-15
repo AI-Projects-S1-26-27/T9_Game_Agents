@@ -1,7 +1,7 @@
 # Controllers the live viewer can put on the RED / BLUE side (cycle with F1 / F2).
 # kind: rl | random | stay | scripted. Every key is required for every entry (roles only for random / stay).
 #   rl        needs `checkpoint` (a .pt file); `deterministic: false` samples actions instead of argmax
-#   scripted  `params` as in configs/rl/default.yaml (roles, guard_mode, guard_leash, scout_behavior)
+#   scripted  `params` as in configs/rl/default.yaml (roles, guard_mode, guard_leash, scout_behavior, chase_radius, escort)
 #   random, stay  `roles`: the role label shown on each team slot (display only, it does not change how
 #                 they move). Scripted teams take their roles from `params`, RL teams from the checkpoint.
 #                 The list needs one entry per agent on the map.
@@ -11,11 +11,21 @@ controllers:
     kind: scripted
     checkpoint: ""
     deterministic: true
-    params: {roles: [attacker, defender, scout], guard_mode: leash, guard_leash: 2, scout_behavior: random}
+    params: {roles: [attacker, attacker, defender, scout], guard_mode: leash, guard_leash: 2, scout_behavior: random, chase_radius: 0, escort: false}
   - label: "Scripted: parked guard"
     kind: scripted
     checkpoint: ""
     deterministic: true
-    params: {roles: [attacker, defender, scout], guard_mode: on_flag, guard_leash: 0, scout_behavior: stay}
-  - {label: "Random", kind: random, checkpoint: "", deterministic: true, params: {}, roles: [attacker, defender, scout]}
-  - {label: "Stay still", kind: stay, checkpoint: "", deterministic: true, params: {}, roles: [attacker, defender, scout]}
+    params: {roles: [attacker, attacker, defender, scout], guard_mode: on_flag, guard_leash: 0, scout_behavior: stay, chase_radius: 0, escort: false}
+  - label: "Scripted: chaser guard"
+    kind: scripted
+    checkpoint: ""
+    deterministic: true
+    params: {roles: [attacker, attacker, defender, scout], guard_mode: chaser, guard_leash: 0, scout_behavior: random, chase_radius: 4, escort: false}
+  - label: "Scripted: escorted attackers"
+    kind: scripted
+    checkpoint: ""
+    deterministic: true
+    params: {roles: [attacker, attacker, defender, scout], guard_mode: leash, guard_leash: 3, scout_behavior: stay, chase_radius: 0, escort: true}
+  - {label: "Random", kind: random, checkpoint: "", deterministic: true, params: {}, roles: [attacker, attacker, defender, scout]}
+  - {label: "Stay still", kind: stay, checkpoint: "", deterministic: true, params: {}, roles: [attacker, attacker, defender, scout]}

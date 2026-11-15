@@ -29,16 +29,21 @@ def summarize_episodes(infos: list[dict], role_names: list[str]) -> dict[str, fl
     for name in infos[0]["components"]:
         out[f"reward/{name}"] = float(np.mean([sum(i["components"][name]) for i in infos]))
 
-    by_opponent: dict[str, list[float]] = defaultdict(list)
+    by_opponent: dict[str, list[str]] = defaultdict(list)
     by_side: dict[str, list[float]] = defaultdict(list)
+    by_spawn: dict[str, list[float]] = defaultdict(list)
     for info in infos:
         won = 1.0 if info["outcome"] == "win" else 0.0
-        by_opponent[info["opponent"]].append(won)
+        by_opponent[info["opponent"]].append(info["outcome"])
         by_side[info["learner_team"].lower()].append(won)
-    for kind, wins in by_opponent.items():
-        out[f"win_rate/opp_{kind}"] = sum(wins) / len(wins)
+        by_spawn["fixed" if info["fixed_spawns"] else "random"].append(won)
+    for label, outcomes in by_opponent.items():  # one entry per opponent label (opp_<label>)
+        for outcome in ("win", "draw", "loss"):
+            out[f"{outcome}_rate/opp_{label}"] = outcomes.count(outcome) / len(outcomes)
     for side, wins in by_side.items():
         out[f"win_rate/side_{side}"] = sum(wins) / len(wins)
+    for spawn, wins in by_spawn.items():
+        out[f"win_rate/spawns_{spawn}"] = sum(wins) / len(wins)
     return out
 
 

@@ -1,7 +1,7 @@
 """Reward computation (the environment itself always returns 0).
 
-Per-agent reward = team outcome + individual events + potential-based shaping
-(+ scout exploration bonus, step penalty). Shaping uses true BFS path distances, so
+Per-agent reward = team outcome (scaled per role) + individual events + potential-based shaping
+(+ scout exploration bonus, escort bonus, step penalty). Shaping uses true BFS path distances, so
 it respects the wall, and is potential-based (F = gamma*phi(s') - phi(s)), which does
 not change which policy is optimal. All weights come from ``RewardsConfig``.
 """
@@ -30,6 +30,7 @@ COMPONENTS = (
     "scout",
     "step",
     "carry",
+    "escort",
 )
 
 
@@ -64,6 +65,13 @@ class RewardCalculator:
         # Distance a flag must be carried from its base to ours; makes the attacker's
         # potential continuous at the moment of pickup.
         self._carry_offset = nav.distance(other, own)
+        share = {
+            Role.ATTACKER: cfg.outcome_share_attacker,
+            Role.DEFENDER: cfg.outcome_share_defender,
+            Role.SCOUT: cfg.outcome_share_scout,
+        }
+        self._outcome_share = np.array([share[r] for r in roles])
+        self._escort_roles = set(cfg.escort_roles)
         self._seen = np.zeros((self.height, self.width), dtype=bool)
         self._prev_potential = np.zeros(len(self.agent_ids))
 
@@ -94,9 +102,17 @@ class RewardCalculator:
                     target = (enemy_flag.x, enemy_flag.y)
                     phi[slot] = -self.cfg.attacker_potential * self.nav.distance(here, target)
             elif role is Role.DEFENDER:
-                target = (own_flag.x, own_flag.y)
-                phi[slot] = -self.cfg.defender_potential * self.nav.distance(here, target)
+                carriers = self._enemy_carrier_cells(obs)
+                if carriers and self.cfg.defender_intercept_potential > 0:
+                    nearest = min(self.nav.distance(here, c) for c in carriers)
+                    phi[slot] = -self.cfg.defender_intercept_potential * nearest
+                else:  # guard the flag wherever it lies (home, carried away, or dropped)
+                    target = (own_flag.x, own_flag.y)
+                    phi[slot] = -self.cfg.defender_potential * self.nav.distance(here, target)
         return phi
+
+    def _enemy_carrier_cells(self, obs: GlobalObservation) -> list[tuple[int, int]]:
+        return [(a.x, a.y) for a in obs.agents.values() if a.team is not self.team and a.active and a.carrying_flag]
 
     # ----------------------------------------------------------------- exploration
 
@@ -134,11 +150,11 @@ class RewardCalculator:
         # Team outcome: everyone shares it, including eliminated agents.
         if obs.terminated:
             if obs.winner is self.team:
-                comp["outcome"][:] = cfg.win
+                comp["outcome"][:] = cfg.win * self._outcome_share
             elif obs.winner is not None:
-                comp["outcome"][:] = cfg.loss
+                comp["outcome"][:] = cfg.loss * self._outcome_share
             else:
-                comp["outcome"][:] = cfg.timeout
+                comp["outcome"][:] = cfg.timeout * self._outcome_share
 
         for event in events:
             kind = event.get("type")
@@ -164,9 +180,20 @@ class RewardCalculator:
 
         # Scout exploration bonus and per-step cost (only for agents that acted).
         fresh = self._mark_seen(obs, credit=True)
+        scale = cfg.scout_floor_fraction + (1.0 - cfg.scout_floor_fraction) * scout_scale
+        carriers = [(a.x, a.y) for a in obs.agents.values() if a.team is self.team and a.active and a.carrying_flag]
         for slot in range(n):
             if self.roles[slot] is Role.SCOUT:
-                comp["scout"][slot] = cfg.scout_new_cell * scout_scale * fresh[slot]
+                comp["scout"][slot] = cfg.scout_new_cell * scale * fresh[slot]
+            agent = obs.agents[self.agent_ids[slot]]
+            if (
+                carriers
+                and agent.active
+                and not agent.carrying_flag
+                and self.roles[slot] in self._escort_roles
+                and any(abs(agent.x - cx) + abs(agent.y - cy) <= cfg.escort_radius for cx, cy in carriers)
+            ):
+                comp["escort"][slot] = cfg.escort_bonus
             before = prev_agents[self.agent_ids[slot]]
             if before.active:
                 comp["step"][slot] = cfg.step_penalty

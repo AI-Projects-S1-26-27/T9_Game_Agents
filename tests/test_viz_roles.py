@@ -53,9 +53,10 @@ def test_unknown_role_names_are_rejected() -> None:
 
 
 def test_every_shipped_non_rl_controller_has_roles_to_show() -> None:
+    env = load_config(ROOT / "configs" / "ctf_v2.yaml")  # the map the shipped controllers are written for
     specs = [s for s in load_controller_specs(ROOT / "configs" / "viz" / "controllers.yaml") if s.kind != "rl"]
     assert specs
     for spec in specs:
-        roles = ControllerFactory().build(spec, ENV, 1).roles
+        roles = ControllerFactory().build(spec, env, 1).roles
         assert "unknown" not in roles, spec.label
-        assert len(roles) == ENV.agents_per_team
+        assert roles == ["attacker", "attacker", "defender", "scout"], spec.label

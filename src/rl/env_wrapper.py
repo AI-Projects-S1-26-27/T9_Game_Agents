@@ -55,7 +55,7 @@ class CTFTrainEnv:
         self._env: CTFEnvironment | None = None
         self._team = Team.RED
         self._opponent: BaseStrategy | None = None
-        self._opponent_kind = ""
+        self._opponent_label = ""
         self._fixed_spawns = False
         self._prev_agents: dict = {}
         self._stats: dict = {}
@@ -114,7 +114,7 @@ class CTFTrainEnv:
     def _choose_opponent(self, phase: PhaseConfig, env_config: CTFConfig) -> tuple[BaseStrategy, str]:
         weights = [o.weight for o in phase.opponents]
         spec = self._rng.choices(phase.opponents, weights=weights, k=1)[0]
-        return build_opponent(spec, env_config, Random(self._rng.randrange(2**31))), spec.kind
+        return build_opponent(spec, env_config, Random(self._rng.randrange(2**31))), spec.label
 
     def reset(self) -> EnvStep:
         if self._runtime is None or self.cfg.curriculum.phases[self._pending_phase] is not self._runtime.phase:
@@ -125,7 +125,7 @@ class CTFTrainEnv:
         self._fixed_spawns = self._rng.random() < phase.fixed_spawn_fraction
         self._env = rt.envs[self._fixed_spawns]
         self._team = self._choose_team()
-        self._opponent, self._opponent_kind = self._choose_opponent(phase, rt.env_config)
+        self._opponent, self._opponent_label = self._choose_opponent(phase, rt.env_config)
         self._opponent.reset()
 
         self._env.reset()
@@ -200,7 +200,7 @@ class CTFTrainEnv:
             "outcome": outcome,
             "length": self._stats["length"],
             "learner_team": self._team.value,
-            "opponent": self._opponent_kind,
+            "opponent": self._opponent_label,
             "phase": self._runtime.phase.name,  # type: ignore[union-attr]
             "fixed_spawns": self._fixed_spawns,
             "pickups": self._stats["pickups"],

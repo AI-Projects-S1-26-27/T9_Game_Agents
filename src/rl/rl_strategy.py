@@ -21,7 +21,7 @@ from ctf.observations import GlobalObservation, PartialTeamObservation, TeamObse
 from rl.canonical import ACTION_INDEX, NUM_ACTIONS
 from rl.checkpoint import load_policy
 from rl.config import RLConfig
-from rl.features import FeatureBuilder
+from rl.features import FeatureBuilder, ObservationLayout
 from rl.mappo import ValueNorm
 from rl.navigation import GridNav
 from rl.networks import ActorCritic
@@ -52,8 +52,10 @@ class RLStrategy(BaseStrategy):
         checkpoint_step: int = 0,
         seed: int = 0,
         device: str | torch.device = "cpu",
+        layout: ObservationLayout | None = None,
     ) -> None:
         spec = model.spec
+        self.layout = layout
         if (spec.height, spec.width) != (env_config.height, env_config.width):
             raise ValueError(
                 f"this policy was trained on a {spec.width}x{spec.height} grid and cannot play on a "
@@ -90,6 +92,7 @@ class RLStrategy(BaseStrategy):
             env_config or meta["env_config"],
             value_norm,
             checkpoint_step=int(meta["counters"]["total_steps"]),
+            layout=meta["layout"],
             **kwargs,
         )
 
@@ -102,7 +105,7 @@ class RLStrategy(BaseStrategy):
 
     def _builder(self, team: Team) -> FeatureBuilder:
         if team not in self._builders:
-            self._builders[team] = FeatureBuilder(self.env_config, team, self.roles, self.config.features)
+            self._builders[team] = FeatureBuilder(self.env_config, team, self.roles, self.config.features, self.layout)
         return self._builders[team]
 
     # --------------------------------------------------------------------- acting

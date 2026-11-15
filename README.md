@@ -59,6 +59,31 @@ uv run tensorboard --logdir runs
 
 Ctrl+C saves a checkpoint before exiting, so a run can always be continued with `--resume latest`.
 
+## Visualisation (`src/viz`)
+
+A viewer for replays and live play (every player labelled with its id and role), a map maker, GIF/MP4
+export, a "watch it learn" time-lapse over checkpoints, and a one-page training report. Press **H** in the
+viewer for every key. Looks, layout and key bindings live in `configs/viz/default.yaml`; the controllers you
+can put on each side are in `configs/viz/controllers.yaml`.
+
+```bash
+uv sync --extra dev --extra rl --extra viz
+
+uv run python -m viz play --checkpoint runs/first_run/checkpoints/latest.pt        # live viewer
+uv run python -m viz play --map configs/maps/center_gate.yaml --red scripted --blue random
+uv run python -m viz mapmaker --map configs/maps/default.yaml                      # paint walls, bases, spawns
+uv run python -m viz replay outputs/viz/episode_seed3.json.gz                      # replay a saved episode
+
+# headless (no window; works on Colab): record, export, time-lapse, report
+uv run python -m viz record --checkpoint runs/first_run/checkpoints/latest.pt --blue leash --seed 3 --mp4 ep.mp4
+uv run python -m viz timelapse --run runs/first_run --count 4 --opponent leash --seed 3
+uv run python -m viz report --run runs/first_run
+```
+
+Maps are ordinary environment configs, so a map saved in the map maker can be used for training or
+evaluation with `--set env.config_path=configs/maps/<name>.yaml`. A trained policy only plays maps of the
+size it was trained on (11x7) and assumes a left-right symmetric map; the map maker's mirror mode keeps maps symmetric.
+
 ## Configuration
 
 All parameters have a single default in `src/ctf/config.py`; YAML files override them and are validated strictly (unknown keys and wrong types are errors). See `configs/default.yaml` for every option with comments.

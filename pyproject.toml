@@ -13,6 +13,15 @@ dependencies = [
 dev = [
     "pytest>=8.0",
 ]
+# Visualisation extras: training report (matplotlib), GIF/MP4 export (pillow, imageio). The viewer itself only
+# needs pygame, which is a normal dependency. To watch a trained checkpoint also install the `rl` extra.
+viz = [
+    "numpy>=1.26",
+    "matplotlib>=3.8",
+    "pillow>=10.0",
+    "imageio>=2.34",
+    "imageio-ffmpeg>=0.5",
+]
 # Reinforcement-learning agent (training, evaluation, plots).
 # PyTorch stopped publishing Intel-Mac (macosx x86_64) wheels after 2.2.2, and 2.2.x needs
 # numpy 1.x, so Intel Macs get those pinned versions; every other platform gets current ones.
@@ -30,7 +39,7 @@ requires = ["hatchling"]
 build-backend = "hatchling.build"
 
 [tool.hatch.build.targets.wheel]
-packages = ["src/ctf", "src/coordination", "src/strategies", "src/rl"]
+packages = ["src/ctf", "src/coordination", "src/strategies", "src/rl", "src/viz"]
 
 [tool.pytest.ini_options]
 testpaths = ["tests"]

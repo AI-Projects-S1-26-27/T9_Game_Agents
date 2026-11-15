@@ -1,0 +1,18 @@
+# Controllers the live viewer can put on the RED / BLUE side (cycle with F1 / F2).
+# kind: rl | random | stay | scripted. EVERY key is required for every entry.
+#   rl        needs `checkpoint` (a .pt file); `deterministic: false` samples actions instead of argmax
+#   scripted  `params` as in configs/rl/default.yaml (roles, guard_mode, guard_leash, scout_behavior)
+controllers:
+  - {label: "RL (your run)", kind: rl, checkpoint: "runs/first_run/checkpoints/latest.pt", deterministic: true, params: {}}
+  - label: "Scripted: leash guard"
+    kind: scripted
+    checkpoint: ""
+    deterministic: true
+    params: {roles: [attacker, defender, scout], guard_mode: leash, guard_leash: 2, scout_behavior: random}
+  - label: "Scripted: parked guard"
+    kind: scripted
+    checkpoint: ""
+    deterministic: true
+    params: {roles: [attacker, defender, scout], guard_mode: on_flag, guard_leash: 0, scout_behavior: stay}
+  - {label: "Random", kind: random, checkpoint: "", deterministic: true, params: {}}
+  - {label: "Stay still", kind: stay, checkpoint: "", deterministic: true, params: {}}

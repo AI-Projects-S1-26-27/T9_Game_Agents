@@ -51,7 +51,7 @@ def _convert(value: Any, hint: Any, path: str) -> Any:
             raise ConfigError(f"{_where(path)}: expected a list, got {value!r}")
         return [_convert(v, item_hint, f"{path}[{i}]") for i, v in enumerate(value)]
 
-    if origin is dict:
+    if hint is dict or origin is dict:
         if not isinstance(value, dict):
             raise ConfigError(f"{_where(path)}: expected a mapping, got {value!r}")
         return dict(value)

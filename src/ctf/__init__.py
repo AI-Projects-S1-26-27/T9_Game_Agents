@@ -17,6 +17,7 @@ from ctf.observations import (
     PartialTeamObservation,
     TeamObservation,
     build_observation,
+    restrict_to_team_view,
 )
 
 __all__ = [
@@ -36,6 +37,7 @@ __all__ = [
     "Team",
     "TeamObservation",
     "build_observation",
+    "restrict_to_team_view",
     "config_from_dict",
     "config_to_dict",
     "load_config",

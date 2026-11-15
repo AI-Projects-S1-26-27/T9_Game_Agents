@@ -86,3 +86,26 @@ def test_legacy_radius_constant_alias_still_importable() -> None:
     from ctf.observations import DEFAULT_PARTIAL_VISIBILITY_RADIUS as from_obs
 
     assert DEFAULT_PARTIAL_VISIBILITY_RADIUS == DEFAULT_VISIBILITY_RADIUS == from_obs
+
+
+def test_restrict_to_team_view_matches_the_partial_observation_builder() -> None:
+    import random
+
+    from ctf import CTFConfig, restrict_to_team_view
+
+    env = CTFEnvironment(CTFConfig(visibility_radius=3, spawn_mode="near_base"))
+    env.reset(seed=4)
+    rng = random.Random(0)
+    from ctf import Action
+
+    for _ in range(40):
+        glob = env.observe(ObservationMode.GLOBAL)
+        for team in (Team.RED, Team.BLUE):
+            expected = env.observe(ObservationMode.PARTIAL, team=team)
+            got = restrict_to_team_view(glob, team)
+            assert got == expected
+        if env.done:
+            break
+        env.step({aid: rng.choice(list(Action)) for aid, a in env.state.agents.items() if a.active})
+    wide = restrict_to_team_view(glob, Team.RED, visibility_radius=50)
+    assert len(wide.agents) == len(glob.agents)

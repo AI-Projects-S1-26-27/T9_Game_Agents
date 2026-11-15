@@ -184,6 +184,42 @@ def build_partial_team_observation(
     )
 
 
+def restrict_to_team_view(
+    observation: GlobalObservation,
+    team: Team,
+    visibility_radius: int | None = None,
+) -> PartialTeamObservation:
+    """The fog-of-war view ``team`` would get from this full observation (same rules as PARTIAL)."""
+    radius = observation.visibility_radius if visibility_radius is None else visibility_radius
+    observers = [a for a in observation.agents.values() if a.team is team and a.active]
+    return PartialTeamObservation(
+        mode=ObservationMode.PARTIAL,
+        team=team,
+        visibility_radius=radius,
+        width=observation.width,
+        height=observation.height,
+        traversable=observation.traversable,
+        obstacles=list(observation.obstacles),
+        red_base=observation.red_base,
+        blue_base=observation.blue_base,
+        agents={
+            aid: agent
+            for aid, agent in observation.agents.items()
+            if _agent_visible_to_team(agent, team, observers, radius)
+        },
+        flags={
+            flag_team: flag
+            for flag_team, flag in observation.flags.items()
+            if _flag_visible_to_team(flag, team, observers, radius)
+        },
+        timestep=observation.timestep,
+        winner=observation.winner,
+        terminated=observation.terminated,
+        truncation=observation.truncation,
+        tagging_enabled=observation.tagging_enabled,
+    )
+
+
 def build_observation(
     state: GameState,
     mode: ObservationMode = ObservationMode.GLOBAL,

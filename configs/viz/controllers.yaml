@@ -2,6 +2,7 @@
 # kind: rl | random | stay | scripted. Every key is required for every entry (roles only for random / stay).
 #   rl        needs `checkpoint` (a .pt file); `deterministic: false` samples actions instead of argmax
 #   scripted  `params` as in configs/rl/default.yaml (roles, guard_mode, guard_leash, scout_behavior, chase_radius, escort)
+#   minimax   alpha-beta search opponent (docs/minimax.md); `params` as below, `roles` is display only like random/stay
 #   random, stay  `roles`: the role label shown on each team slot (display only, it does not change how
 #                 they move). Scripted teams take their roles from `params`, RL teams from the checkpoint.
 #                 The list needs one entry per agent on the map.
@@ -29,3 +30,16 @@ controllers:
     params: {roles: [attacker, attacker, defender, scout], guard_mode: leash, guard_leash: 3, scout_behavior: stay, chase_radius: 0, escort: true}
   - {label: "Random", kind: random, checkpoint: "", deterministic: true, params: {}, roles: [attacker, attacker, defender, scout]}
   - {label: "Stay still", kind: stay, checkpoint: "", deterministic: true, params: {}, roles: [attacker, attacker, defender, scout]}
+  - label: "Minimax (alpha-beta, depth 2)"
+    kind: minimax
+    checkpoint: ""
+    deterministic: true
+    roles: [attacker, attacker, defender, scout]
+    params:
+      depth: 2
+      own_moves_per_agent: 2
+      enemy_moves_per_agent: 2
+      danger_radius: 3
+      max_nodes: 4000
+      alpha_beta: true
+      weights: {win: 1000.0, carry_progress: 4.0, pickup: 20.0, approach: 1.0, approach_others: 0.5, escort: 2.0, enemy_carry_progress: 4.0, enemy_pickup: 20.0, defend: 1.0, alive: 3.0, pressure: 1.5}

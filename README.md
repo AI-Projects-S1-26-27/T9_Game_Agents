@@ -68,6 +68,13 @@ Checkpoints from before the v2 rules (for example the 2M-step Colab run, 3 agent
 for the viewer: features added later are simply not shown to the older network. They cannot be resumed or
 played on a 4-agent map. See `src/rl/checkpoint.py` (`migrate_config`, `ObservationLayout`).
 
+## Opponents
+
+Opponent kinds (`random`, `stay`, `scripted`, `minimax`) are built from YAML entries; see `src/rl/opponents.py`.
+`minimax` is a depth-limited alpha-beta searcher over joint team moves (`src/rl/minimax.py`, explained in
+`docs/minimax.md`). It is meant as a strong fixed evaluation opponent; it is also available in the viewer
+(`uv run python -m viz play --map configs/ctf_v2.yaml --red scripted --blue minimax`).
+
 ## Environment rules
 
 `configs/default.yaml` keeps the original rules (3 agents per team). `configs/ctf_v2.yaml` (same map, 4 agents per

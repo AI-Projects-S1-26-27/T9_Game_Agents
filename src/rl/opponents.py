@@ -10,6 +10,9 @@ Kinds (selected by ``OpponentSpec.kind`` in the curriculum config):
               send it home, scouts wander or wait. Options: ``guard_mode: chaser`` leaves the post
               to chase any enemy that comes close; ``escort: true`` makes attackers move as a pair
               so the carrier is never alone (the headcount rule punishes a lone carrier).
+``minimax``   depth-limited alpha-beta search over joint team moves (``rl/minimax.py``, params in
+              ``MinimaxParams``). Slower than the others (about 10 ms per decision at depth 2), so it is
+              mainly an evaluation opponent; see docs/minimax.md.
 """
 
 from __future__ import annotations
@@ -24,11 +27,12 @@ from ctf.config import CTFConfig
 from ctf.game_state import FlagStatus
 from ctf.observations import TeamObservation
 from rl.config import OpponentSpec
+from rl.minimax import MinimaxParams, MinimaxStrategy
 from rl.navigation import MOVES, GridNav
 from rl.schema import ConfigError, from_dict
 from strategies import BaseStrategy, Role, StayStrategy
 
-KNOWN_KINDS = ("random", "stay", "scripted")
+KNOWN_KINDS = ("random", "stay", "scripted", "minimax")
 
 
 class GuardMode(str, Enum):
@@ -189,6 +193,8 @@ def build_opponent(spec: OpponentSpec, env_config: CTFConfig, rng: Random) -> Ba
     if spec.kind == "scripted":
         params = from_dict(ScriptedParams, spec.params, f"opponent[{spec.kind}].params")
         return ScriptedTeamStrategy(env_config, params, rng)
+    if spec.kind == "minimax":
+        return MinimaxStrategy(env_config, from_dict(MinimaxParams, spec.params, f"opponent[{spec.kind}].params"), rng)
     if spec.params:
         raise ConfigError(f"opponent kind {spec.kind!r} takes no params, got {sorted(spec.params)}")
     return RandomStrategy(rng) if spec.kind == "random" else StayStrategy()

@@ -1,0 +1,30 @@
+{
+  "git_commit": "unknown",
+  "python": "3.13.16",
+  "torch": "2.14.1+cu130",
+  "platform": "Linux-6.6.159+-x86_64-with-glibc2.39",
+  "argv": [
+    "/usr/local/lib/python3.13/dist-packages/rl/train.py",
+    "--config",
+    "configs/rl/default.yaml",
+    "--set",
+    "run.name=v2_run1",
+    "--set",
+    "run.output_dir=/content/drive/MyDrive/ctf_runs",
+    "--set",
+    "run.device=cuda",
+    "--set",
+    "run.torch_threads=1",
+    "--set",
+    "rollout.num_workers=2",
+    "--set",
+    "rollout.total_steps=8000000",
+    "--set",
+    "ppo.learning_rate=0.0001",
+    "--set",
+    "run.keep_checkpoints=0",
+    "--resume",
+    "latest"
+  ],
+  "started": "2026-11-16 06:50:08"
+}

@@ -45,6 +45,6 @@ Thumbs.db
 
 !.gitignore
 !runs/v2_run1/
-runs/colab_run1
+!runs/colab_run1
 *.patch
 rl_*_files.zip

@@ -13,3 +13,5 @@ Installed 1 package in 3ms
   vs scripted_parked    as blue 82/100 wins
   vs scripted_chaser    as red  97/100 wins
   vs scripted_chaser    as blue 97/100 wins
+  vs scripted_escort    as red  94/100 wins
+  vs scripted_escort    as blue 96/100 wins

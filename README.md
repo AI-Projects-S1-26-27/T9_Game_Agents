@@ -112,7 +112,7 @@ uv run python -m rl.evaluate --checkpoint runs/colab_run1/checkpoints/latest.pt 
 ```
 
 After the main table the same command also runs three checks (configured in the same YAML, skip with
-`--skip held_out role_swap policy_check`): the policy on **held-out maps** (other 11x7 layouts from `configs/maps`),
+`--skip held_out role_swap policy_check`): the policy on **held-out maps** (other 11x7 layouts from `configs/maps`, reported as seen / unseen, see `docs/multimap.md`),
 a **role-swap sensitivity check** (does the argmax action change when the role inputs are swapped? REPORT ONLY, no
 pass/fail: an untrained network already scores high, so judge role specialisation from the per-role behaviour numbers) and an
 **argmax-vs-sampled check**. Training can run a small version of the same evaluation every few hundred thousand

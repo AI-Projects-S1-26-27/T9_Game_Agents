@@ -23,6 +23,7 @@ from rl.config import RLConfig
 from rl.eval_config import EvalConfig, PolicyMode, load_eval_config
 from rl.evaluate import build_eval_opponent, eval_env_config, evaluate_extras, evaluate_policy, held_out_env_config
 from rl.mappo import ValueNorm
+from rl.maps import layout_key, same_file, training_map_env_config
 from rl.networks import ActorCritic
 from rl.rl_strategy import RLStrategy
 from rl.schema import ConfigError, to_dict
@@ -43,6 +44,32 @@ def load_training_eval_config(cfg: RLConfig, root: Path | None = None) -> EvalCo
                 f"noise_free_eval: opponent {opp.label!r} in {path} has {len(roles)} roles but the team has {n_roles}"
             )
     return eval_cfg
+
+
+def validate_map_pools(cfg: RLConfig, env_config: CTFConfig, eval_cfg: EvalConfig | None = None) -> None:
+    """Fail at startup if a phase's ``maps`` pool is unusable or overlaps the noise-free evaluation's held-out maps.
+
+    Every pool map must exist and pass the training-map checks (same size, mirror symmetric, connected bases).
+    The held-out maps of ``eval_cfg`` are the transfer test, so none of them may be a pool map: same file, or
+    the same layout (walls and bases) under another name, is an error naming both files.
+    """
+    pool: list[tuple[str, str, tuple]] = []  # (phase, map spec text, layout)
+    for phase in cfg.curriculum.phases:
+        for spec in phase.maps:
+            where = f"phase {phase.name!r} map {spec.label!r} ({spec.path})"
+            if not Path(spec.path).exists():
+                raise ConfigError(f"{where}: map file not found")
+            pool.append((phase.name, spec.path, layout_key(training_map_env_config(env_config, spec.path))))
+    if eval_cfg is None:
+        return
+    for held in eval_cfg.held_out.maps:
+        held_layout = layout_key(held_out_env_config(env_config, held.path))
+        for phase_name, pool_path, pool_layout in pool:
+            if same_file(held.path, pool_path) or held_layout == pool_layout:
+                raise ConfigError(
+                    f"held-out map {held.label!r} ({held.path}) is also a training map of phase {phase_name!r} "
+                    f"({pool_path}): the held-out maps must be maps the policy never trains on"
+                )
 
 
 def flatten_scalars(results: dict[str, Any], extras: dict[str, Any]) -> dict[str, float]:

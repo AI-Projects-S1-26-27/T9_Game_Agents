@@ -95,6 +95,7 @@ curriculum:
         - 6
       - - 8
         - 0
+    maps: []
     opponents:
     - kind: stay
       weight: 1.0
@@ -114,6 +115,7 @@ curriculum:
       visibility_radius: 6
       spawn_mode: near_base
       spawn_allow_base: true
+    maps: []
     opponents:
     - kind: scripted
       weight: 2.0
@@ -155,6 +157,7 @@ curriculum:
       visibility_radius: 3
       spawn_mode: near_base
       spawn_allow_base: true
+    maps: []
     opponents:
     - kind: scripted
       weight: 2.0

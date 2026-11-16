@@ -61,6 +61,9 @@ bases and the spawn cells are taken from the map file; rules, visibility, spawn 
 the policy's environment. A map with a different width, height or `agents_per_team` is a clear error, which is why
 `eval_legacy.yaml` (3 agents) lists no maps. `held_out.opponents` picks which of the top-level opponents to play
 (leave minimax out: it is slow). JSON: `held_out[map][opponent][all|red|blue]`, same fields as the main table.
+Each map is marked SEEN (the checkpoint's own config trained on that layout: its base map or a `maps` pool of any phase,
+compared by walls and bases) or UNSEEN; the report prints the two groups separately and the JSON has
+`held_out_seen: {map: bool}`. Old checkpoints have no pools, so only their base layout is seen (docs/multimap.md).
 
 **Role-swap sensitivity** (`role_swap`). The policy plays `role_swap.episodes` games per opponent. At every decision,
 for each pair `[A, B]` in `swaps`, the network is asked again with the roles of the whole team swapped (agents playing A
@@ -90,8 +93,8 @@ so it is slightly conservative) and `top_action_prob`, the mean probability of t
 
 `configs/rl/default.yaml` has a `noise_free_eval` section. When `enabled`, the trainer pauses after the update that
 crosses each multiple of `every_steps` environment steps, plays the CURRENT policy through the same code as the CLI on
-the small eval YAML named in `config_path` (`configs/rl/eval_train.yaml`: 20 games per opponent, no minimax, two
-held-out maps, a short role-swap check, policy check off) and writes:
+the small eval YAML named in `config_path` (`configs/rl/eval_train.yaml`: 20 games per opponent, no minimax, the two
+UNSEEN maps `center_gate` and `long_wall_south`, a short role-swap check, policy check off) and writes:
 
 * an event record `noise_free_eval` in `metrics.jsonl` (scalars `eval/win_rate/<opponent>`, `eval/mean_win_rate`,
   `eval/min_win_rate`, `eval/stay_fraction`, `eval_held_out/...`, `eval/role_swap_changed`, `eval/seconds`) and the same

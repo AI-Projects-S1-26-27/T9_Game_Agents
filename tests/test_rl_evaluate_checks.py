@@ -394,11 +394,13 @@ def test_evaluate_extras_runs_enabled_checks_and_skips_the_rest(tmp_path) -> Non
     policy = _peaked_policy(env_config, role_preferences=None)
     cfg = _cfg(held_out=HeldOutConfig(2, ["random"], [HeldOutMap("tiny", _map_yaml(tmp_path))]))
     full = ev.evaluate_extras(policy, ROLES3, env_config, cfg)
-    assert set(full) == {"held_out", "role_swap", "policy_check"} and all(v is not None for v in full.values())
+    assert set(full) == {"held_out", "held_out_seen", "role_swap", "policy_check"} and all(v is not None for v in full.values())
+    assert full["held_out_seen"] == {"tiny": False}  # a test double has only its base map, which is not the "tiny" layout
     skipped = ev.evaluate_extras(policy, ROLES3, env_config, cfg, skip=["held_out", "role_swap"])
-    assert skipped["held_out"] is None and skipped["role_swap"] is None and skipped["policy_check"] is not None
+    assert skipped["held_out"] is None and skipped["held_out_seen"] is None
+    assert skipped["role_swap"] is None and skipped["policy_check"] is not None
     off = _cfg(role_swap=replace(cfg.role_swap, enabled=False), policy_check=replace(cfg.policy_check, enabled=False))
-    assert ev.evaluate_extras(StayStrategy(), ROLES3, env_config, off) == {"held_out": None, "role_swap": None, "policy_check": None}
+    assert ev.evaluate_extras(StayStrategy(), ROLES3, env_config, off) == {"held_out": None, "held_out_seen": None, "role_swap": None, "policy_check": None}
     with pytest.raises(ConfigError, match="unknown check"):
         ev.evaluate_extras(policy, ROLES3, env_config, cfg, skip=["nope"])
     with pytest.raises(ConfigError, match="roles"):

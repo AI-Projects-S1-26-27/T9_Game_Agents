@@ -130,6 +130,7 @@ def migrate_config(plain: dict[str, Any]) -> dict[str, Any]:
         if isinstance(cfg.get(section), dict):
             cfg[section].setdefault(key, value)
     for phase in cfg.get("curriculum", {}).get("phases", []):
+        phase.setdefault("maps", [])  # added with multi-map training: older runs trained on the base map only
         used: dict[str, int] = {}
         for opp in phase.get("opponents", []):
             if "label" not in opp:  # old runs lumped same-kind opponents: name them scripted, scripted_2, ...

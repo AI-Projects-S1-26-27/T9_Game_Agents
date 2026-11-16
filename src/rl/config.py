@@ -15,6 +15,7 @@ from pathlib import Path
 from typing import Any
 
 from ctf.config import CTFConfig, config_from_dict, config_to_dict, load_config
+from rl.maps import MAP_KEYS, training_map_env_config
 from rl.schema import ConfigError, apply_overrides, from_dict, read_yaml
 from strategies.roles import Role
 
@@ -127,6 +128,15 @@ class OpponentSpec:
 
 
 @dataclass(frozen=True)
+class PhaseMapSpec:
+    """One map of a phase's training pool (see ``rl.maps``): episodes draw a map by ``weight``."""
+
+    path: str  # map YAML (configs/maps/*.yaml); only walls, bases and spawn cells are used
+    label: str  # metrics are split per label (win_rate/map_<label>); unique within a phase
+    weight: float
+
+
+@dataclass(frozen=True)
 class PhaseConfig:
     name: str
     max_steps: int
@@ -136,6 +146,7 @@ class PhaseConfig:
     env_overrides: dict[str, Any]  # CTFConfig keys applied on top of the base env config
     opponent_noise: float  # probability that an opponent action is replaced by a random one
     opponents: list[OpponentSpec]
+    maps: list[PhaseMapSpec]  # training pool of layouts; empty = every episode uses the base map. Not combinable with map keys in env_overrides
 
 
 @dataclass(frozen=True)
@@ -228,6 +239,13 @@ def _validate(cfg: RLConfig) -> None:
         labels = [o.label for o in ph.opponents]
         _check(all(re.fullmatch(r"[a-z0-9_]+", lab) for lab in labels), f"{loc}: opponent labels must match [a-z0-9_]+, got {labels}")
         _check(len(set(labels)) == len(labels), f"{loc}: opponent labels must be unique, got {labels}")
+        map_labels = [m.label for m in ph.maps]
+        _check(all(m.weight > 0 for m in ph.maps), f"{loc}: map weights must be > 0")
+        _check(all(re.fullmatch(r"[a-z0-9_]+", lab) for lab in map_labels), f"{loc}: map labels must match [a-z0-9_]+, got {map_labels}")
+        _check(len(set(map_labels)) == len(map_labels), f"{loc}: map labels must be unique, got {map_labels}")
+        if ph.maps:
+            clash = sorted(k for k in MAP_KEYS if k in ph.env_overrides)
+            _check(not clash, f"{loc}: env_overrides {clash} would silently replace the walls/bases/spawns of the maps pool; remove them or empty `maps`")
     nf = cfg.noise_free_eval
     _check(nf.every_steps >= 1, "noise_free_eval.every_steps must be >= 1")
     _check(bool(nf.config_path) or not nf.enabled, "noise_free_eval.config_path must be set when enabled")
@@ -252,8 +270,23 @@ def load_base_env_config(cfg: RLConfig, root: Path | None = None) -> CTFConfig:
     return env_cfg
 
 
+def phase_map_bases(base: CTFConfig, phase: PhaseConfig) -> list[tuple[str, float, CTFConfig]]:
+    """The phase's maps as ``(label, weight, base env config with that map's layout)``.
+
+    Without a ``maps`` pool this is the single entry ``("", 1.0, base)``. The phase's ``env_overrides`` are NOT
+    applied here (pass each result to :func:`phase_env_config`). A pool map is loaded with the checks of a
+    training map (same size, mirror symmetric, connected bases).
+    """
+    if not phase.maps:
+        return [("", 1.0, base)]
+    return [(m.label, m.weight, training_map_env_config(base, m.path)) for m in phase.maps]
+
+
 def phase_env_config(base: CTFConfig, phase: PhaseConfig, *, fixed_spawns: bool) -> CTFConfig:
-    """Base env config with the phase's overrides; ``fixed_spawns`` forces spawn_mode=fixed."""
+    """Base env config with the phase's overrides; ``fixed_spawns`` forces spawn_mode=fixed.
+
+    ``base`` is the base environment or one entry of :func:`phase_map_bases` (the map's layout comes with it).
+    """
     merged = {**config_to_dict(base), **phase.env_overrides}
     if fixed_spawns:
         merged["spawn_mode"] = "fixed"
@@ -282,10 +315,12 @@ __all__ = [
     "RLConfig",
     "PhaseConfig",
     "OpponentSpec",
+    "PhaseMapSpec",
     "NoiseFreeEvalConfig",
     "LeagueConfig",
     "load_rl_config",
     "load_base_env_config",
     "phase_env_config",
+    "phase_map_bases",
     "config_to_plain",
 ]

@@ -32,11 +32,14 @@ def summarize_episodes(infos: list[dict], role_names: list[str]) -> dict[str, fl
     by_opponent: dict[str, list[str]] = defaultdict(list)
     by_side: dict[str, list[float]] = defaultdict(list)
     by_spawn: dict[str, list[float]] = defaultdict(list)
+    by_map: dict[str, list[float]] = defaultdict(list)
     for info in infos:
         won = 1.0 if info["outcome"] == "win" else 0.0
         by_opponent[info["opponent"]].append(info["outcome"])
         by_side[info["learner_team"].lower()].append(won)
         by_spawn["fixed" if info["fixed_spawns"] else "random"].append(won)
+        if info.get("map"):  # "" = the phase has no maps pool: no per-map series
+            by_map[info["map"]].append(won)
     for label, outcomes in by_opponent.items():  # one entry per opponent label (opp_<label>)
         for outcome in ("win", "draw", "loss"):
             out[f"{outcome}_rate/opp_{label}"] = outcomes.count(outcome) / len(outcomes)
@@ -44,6 +47,8 @@ def summarize_episodes(infos: list[dict], role_names: list[str]) -> dict[str, fl
         out[f"win_rate/side_{side}"] = sum(wins) / len(wins)
     for spawn, wins in by_spawn.items():
         out[f"win_rate/spawns_{spawn}"] = sum(wins) / len(wins)
+    for map_label, wins in by_map.items():  # one entry per training map (map_<label>)
+        out[f"win_rate/map_{map_label}"] = sum(wins) / len(wins)
     return out
 
 

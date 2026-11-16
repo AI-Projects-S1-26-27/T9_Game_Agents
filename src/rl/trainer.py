@@ -18,7 +18,7 @@ from rl.metrics import MetricsLogger, summarize_episodes
 from rl.networks import ActorCritic, NetworkSpec
 from rl.rollout import collect
 from rl.schema import ConfigError
-from rl.train_eval import NoiseFreeEvaluator
+from rl.train_eval import NoiseFreeEvaluator, validate_map_pools
 from rl.vec_env import make_vec_env
 
 
@@ -59,6 +59,7 @@ class Trainer:
         # Fails here, before any training, if the eval YAML is invalid.
         self.evaluator = NoiseFreeEvaluator(cfg, env_config, run_dir) if cfg.noise_free_eval.enabled else None
         validate_file_opponents(cfg)  # a missing opponent file stops the run now, not hours in
+        validate_map_pools(cfg, env_config, self.evaluator.eval_cfg if self.evaluator is not None else None)  # bad pool / overlap with held-out maps
         self.league_dir = resolve_league_dir(cfg, run_dir)
         if cfg.league.directory and resume_from is None and LeagueStore(self.league_dir, 1).snapshots():
             raise ConfigError(

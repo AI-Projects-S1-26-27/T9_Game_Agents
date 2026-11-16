@@ -44,8 +44,9 @@ from rl.config import OpponentSpec
 from rl.eval_config import EvalConfig, EvalOpponent, PolicyMode, Side, load_eval_config
 from rl.eval_stats import mean_stat, rate, rate_difference
 from rl.features import ROLE_ORDER
+from rl.maps import is_mirror_symmetric, layout_key, map_env_config  # noqa: F401  (is_mirror_symmetric: re-exported, tests and callers use ev.is_mirror_symmetric)
 from rl.opponents import KNOWN_KINDS, build_opponent
-from rl.schema import ConfigError, parse_override, read_yaml, to_dict
+from rl.schema import ConfigError, parse_override, to_dict
 from strategies import BaseStrategy, Role
 
 ACTION_NAMES = [a.name for a in Action]
@@ -81,37 +82,13 @@ def eval_env_config(base: CTFConfig, overrides: dict[str, Any], *, fixed_spawns:
         raise ConfigError(f"eval env_overrides invalid: {exc}") from exc
 
 
-def is_mirror_symmetric(config: CTFConfig) -> bool:
-    """Is the map left-right symmetric (so BLUE's view can be flipped onto RED's)?"""
-    w = config.width
-    return (
-        {(w - 1 - x, y) for x, y in config.obstacles} == set(config.obstacles)
-        and (w - 1 - config.red_base[0], config.red_base[1]) == tuple(config.blue_base)
-    )
-
-
-# Keys a held-out map file contributes. Everything else (rules, visibility, spawn mode, episode
-# length, carrier slots, ...) stays what the policy's own environment config says, so a held-out
-# result differs from the main result in the walls and base positions only.
-MAP_KEYS = ("obstacles", "red_base", "blue_base", "red_spawns", "blue_spawns")
-
-
 def held_out_env_config(base: CTFConfig, map_path: str | Path) -> CTFConfig:
-    """``base`` with the geometry (walls, bases, spawn cells) of the map file at ``map_path``."""
-    data = read_yaml(map_path)
-    for key in ("width", "height", "agents_per_team"):
-        if data.get(key) != getattr(base, key):
-            raise ConfigError(
-                f"held-out map {map_path}: {key} is {data.get(key)!r} but the policy's environment has "
-                f"{getattr(base, key)!r}; only layouts of the same size and team size can be used"
-            )
-    missing = [k for k in MAP_KEYS if k not in data]
-    if missing:
-        raise ConfigError(f"held-out map {map_path}: missing key(s) {missing}")
-    try:
-        return config_from_dict({**config_to_dict(base), **{k: data[k] for k in MAP_KEYS}})
-    except ValueError as exc:
-        raise ConfigError(f"held-out map {map_path} is invalid: {exc}") from exc
+    """``base`` with the geometry (walls, bases, spawn cells) of the map file at ``map_path``.
+
+    Rules and everything else stay what the policy's own environment config says, so a held-out result
+    differs from the main result in the walls and base positions only (see ``rl.maps``).
+    """
+    return map_env_config(base, map_path, what="held-out map")
 
 
 # ---------------------------------------------------------------------------- per-episode data
@@ -433,6 +410,29 @@ def evaluate_held_out(
     return out
 
 
+def trained_layouts(learner: Any, env_config: CTFConfig) -> list[tuple]:
+    """Layouts the policy was trained on: its base map plus every map of the ``maps`` pools in its own RL config.
+
+    Compared by walls and bases, not by file name, so ``configs/maps/default.yaml`` counts as seen for a policy
+    trained on ``configs/ctf_v2.yaml`` (the same layout). A learner without an RL config (a test double) has
+    only the base map. Old checkpoints have empty pools, so for them only the base layout is seen.
+    """
+    layouts = [layout_key(env_config)]
+    rl_cfg = getattr(learner, "config", None)
+    for phase in getattr(getattr(rl_cfg, "curriculum", None), "phases", []):
+        for spec in phase.maps:
+            layouts.append(layout_key(map_env_config(env_config, spec.path, what="training map")))
+    return layouts
+
+
+def held_out_seen(learner: Any, env_config: CTFConfig, cfg: EvalConfig) -> dict[str, bool] | None:
+    """For every held-out map of the eval config: was the policy trained on this layout? ``None`` without held-out maps."""
+    if not cfg.held_out.maps:
+        return None
+    trained = trained_layouts(learner, env_config)
+    return {m.label: layout_key(held_out_env_config(env_config, m.path)) in trained for m in cfg.held_out.maps}
+
+
 class _RoleSwapProbe(BaseStrategy):
     """Plays like ``inner`` while counting, per role pair, how often swapping the roles changes the argmax action."""
 
@@ -606,6 +606,8 @@ def evaluate_extras(
         raise ConfigError(f"policy has {len(roles)} roles but the env has {env_config.agents_per_team} agents per team")
     return {
         "held_out": None if "held_out" in skip else evaluate_held_out(learner, roles, env_config, cfg, progress=progress),
+        # {map: trained on it?} next to the results (a separate key: consumers loop over every entry of "held_out")
+        "held_out_seen": None if "held_out" in skip else held_out_seen(learner, env_config, cfg),
         "role_swap": (
             role_swap_check(learner, roles, env_config, cfg, progress=progress)
             if cfg.role_swap.enabled and "role_swap" not in skip else None
@@ -676,19 +678,29 @@ def format_extras(extras: dict[str, Any], meta: dict[str, Any]) -> str:
     lines: list[str] = []
     held = extras.get("held_out")
     if held:
-        lines += ["", f"held-out maps (maps the policy was not trained on; sides pooled; intervals {int(round(100 * meta['confidence']))}% Wilson)",
-                  f"  {'map':<18}{'opponent':<18}{'n':>5} {'win%':>6} {'win CI':>11} {'draw%':>6} {'loss%':>6}"]
-        for map_label, per_opp in held.items():
-            wins = []
-            for opp_label, block in per_opp.items():
-                s = block["all"]
-                wins.append(s["win"]["rate"])
-                lines.append(
-                    f"  {map_label:<18}{opp_label:<18}{s['n']:>5} {_pct(s['win'])} {_ci(s['win']):>11} "
-                    f"{_pct(s['draw'])} {_pct(s['loss'])}"
-                )
-            if wins:
-                lines.append(f"  {map_label:<18}{'(mean over opponents)':<18}{'':>5} {100 * sum(wins) / len(wins):6.1f}")
+        seen_flags = extras.get("held_out_seen") or {}  # missing (old JSON / test double): every map counts as unseen
+        lines += ["", f"held-out maps (sides pooled; intervals {int(round(100 * meta['confidence']))}% Wilson). "
+                      "seen = the policy was trained on this layout, unseen = never trained on it (a transfer test)"]
+        for group, title in ((True, "seen maps"), (False, "unseen maps")):
+            members = {m: per_opp for m, per_opp in held.items() if bool(seen_flags.get(m, False)) is group}
+            if not members:
+                continue
+            lines += ["", f"{title}:", f"  {'map':<18}{'opponent':<18}{'n':>5} {'win%':>6} {'win CI':>11} {'draw%':>6} {'loss%':>6}"]
+            group_wins = []
+            for map_label, per_opp in members.items():
+                wins = []
+                for opp_label, block in per_opp.items():
+                    s = block["all"]
+                    wins.append(s["win"]["rate"])
+                    lines.append(
+                        f"  {map_label:<18}{opp_label:<18}{s['n']:>5} {_pct(s['win'])} {_ci(s['win']):>11} "
+                        f"{_pct(s['draw'])} {_pct(s['loss'])}"
+                    )
+                if wins:
+                    lines.append(f"  {map_label:<18}{'(mean over opponents)':<18}{'':>5} {100 * sum(wins) / len(wins):6.1f}")
+                    group_wins.append(sum(wins) / len(wins))
+            if group_wins:
+                lines.append(f"  {title} mean over maps: {100 * sum(group_wins) / len(group_wins):.1f}")
     swap = extras.get("role_swap")
     if swap:
         lines += ["", "role-swap check (REPORT ONLY, no pass/fail): share of decisions whose argmax action changes when the roles "

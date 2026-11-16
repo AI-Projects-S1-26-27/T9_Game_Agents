@@ -18,7 +18,7 @@ from ctf.agent import Team
 from ctf.config import CTFConfig
 from ctf.environment import CTFEnvironment
 from ctf.observations import ObservationMode
-from rl.config import LearnerSide, PhaseConfig, RLConfig, phase_env_config
+from rl.config import LearnerSide, PhaseConfig, RLConfig, phase_env_config, phase_map_bases
 from rl.features import ActorFeatures, CriticFeatures, FeatureBuilder
 from rl.league import LeagueEmptyError, LeagueStore, build_checkpoint_opponent, get_store, is_league_spec, uses_league_source
 from rl.navigation import GridNav
@@ -38,12 +38,21 @@ class EnvStep:
 
 
 @dataclass
-class _PhaseRuntime:
-    phase: PhaseConfig
+class _MapRuntime:
+    """Everything that depends on the layout: environments, features, rewards (path distances!) and the env config."""
+
+    label: str  # "" when the phase has no maps pool (the base map)
     envs: dict[bool, CTFEnvironment]  # keyed by "uses fixed spawns"
     builders: dict[Team, FeatureBuilder]
     rewards: dict[Team, RewardCalculator]
     env_config: CTFConfig
+
+
+@dataclass
+class _PhaseRuntime:
+    phase: PhaseConfig
+    maps: list[_MapRuntime]  # one entry without a maps pool
+    weights: list[float]  # draw weights of `maps`
 
 
 class CTFTrainEnv:
@@ -58,6 +67,7 @@ class CTFTrainEnv:
         self._scout_scale = 1.0
         # per-episode state
         self._env: CTFEnvironment | None = None
+        self._map: _MapRuntime | None = None
         self._team = Team.RED
         self._opponent: BaseStrategy | None = None
         self._opponent_label = ""
@@ -92,26 +102,29 @@ class CTFTrainEnv:
 
     def _build_runtime(self, index: int) -> None:
         phase = self.cfg.curriculum.phases[index]
+        maps: list[_MapRuntime] = []
+        weights: list[float] = []
+        for label, weight, map_base in phase_map_bases(self.base_env_config, phase):
+            maps.append(self._build_map_runtime(phase, label, map_base))
+            weights.append(weight)
+        self._runtime = _PhaseRuntime(phase, maps, weights)
+
+    def _build_map_runtime(self, phase: PhaseConfig, label: str, map_base: CTFConfig) -> _MapRuntime:
         envs: dict[bool, CTFEnvironment] = {}
-        env_config = phase_env_config(self.base_env_config, phase, fixed_spawns=False)
+        env_config = phase_env_config(map_base, phase, fixed_spawns=False)
         for fixed in (True, False):
-            conf = phase_env_config(self.base_env_config, phase, fixed_spawns=fixed)
+            conf = phase_env_config(map_base, phase, fixed_spawns=fixed)
             conf.seed = self._rng.randrange(2**31)
             envs[fixed] = CTFEnvironment(conf)
-        traversable = [
-            [(x, y) not in set(env_config.obstacles) for x in range(env_config.width)]
-            for y in range(env_config.height)
-        ]
-        nav = GridNav(traversable)
+        walls = set(env_config.obstacles)
+        traversable = [[(x, y) not in walls for x in range(env_config.width)] for y in range(env_config.height)]
+        nav = GridNav(traversable)  # this map's own path distances (they differ between layouts)
         roles = list(self.cfg.roles.slots)
-        builders = {
-            t: FeatureBuilder(env_config, t, roles, self.cfg.features) for t in Team
-        }
+        builders = {t: FeatureBuilder(env_config, t, roles, self.cfg.features) for t in Team}
         reward_calcs = {
-            t: RewardCalculator(env_config, t, roles, self.cfg.rewards, self.cfg.ppo.gamma, nav)
-            for t in Team
+            t: RewardCalculator(env_config, t, roles, self.cfg.rewards, self.cfg.ppo.gamma, nav) for t in Team
         }
-        self._runtime = _PhaseRuntime(phase, envs, builders, reward_calcs, env_config)
+        return _MapRuntime(label, envs, builders, reward_calcs, env_config)
 
     # ------------------------------------------------------------------ episodes
 
@@ -154,18 +167,21 @@ class CTFTrainEnv:
         assert rt is not None
         phase = rt.phase
         self._fixed_spawns = self._rng.random() < phase.fixed_spawn_fraction
-        self._env = rt.envs[self._fixed_spawns]
+        # One map = no random draw, so a config without a maps pool consumes the same random numbers as before.
+        mrt = rt.maps[0] if len(rt.maps) == 1 else self._rng.choices(rt.maps, weights=rt.weights, k=1)[0]
+        self._map = mrt
+        self._env = mrt.envs[self._fixed_spawns]
         self._team = self._choose_team()
         self._opponent, self._opponent_label, self._opponent_snapshot_step, self._opponent_noisy = (
-            self._choose_opponent(phase, rt.env_config)
+            self._choose_opponent(phase, mrt.env_config)  # the opponent plays on THIS episode's map
         )
         self._opponent.reset()
 
         self._env.reset()
-        builder = rt.builders[self._team]
+        builder = mrt.builders[self._team]
         builder.reset()
         glob = self._env.observe(ObservationMode.GLOBAL)
-        rt.rewards[self._team].reset(glob)
+        mrt.rewards[self._team].reset(glob)
         self._prev_agents = dict(glob.agents)
         self._stats = {
             "returns": np.zeros(self.num_agents),
@@ -180,10 +196,10 @@ class CTFTrainEnv:
         return EnvStep(actor, critic, np.zeros(self.num_agents), False, {})
 
     def step(self, actions: np.ndarray) -> EnvStep:
-        rt, env = self._runtime, self._env
-        assert rt is not None and env is not None and self._opponent is not None
+        rt, env, mrt = self._runtime, self._env, self._map
+        assert rt is not None and env is not None and mrt is not None and self._opponent is not None
         team, opp_team = self._team, self._team.opponent
-        builder = rt.builders[team]
+        builder = mrt.builders[team]
 
         mine: dict[str, Action] = {}
         for slot, agent_id in enumerate(builder.agent_ids):
@@ -202,7 +218,7 @@ class CTFTrainEnv:
 
         _, _, done, info = env.step({**mine, **theirs})
         glob = env.observe(ObservationMode.GLOBAL)
-        result = rt.rewards[team].step(glob, self._prev_agents, info.get("events", []), self._scout_scale)
+        result = mrt.rewards[team].step(glob, self._prev_agents, info.get("events", []), self._scout_scale)
         self._prev_agents = dict(glob.agents)
 
         self._stats["returns"] += result.total
@@ -234,6 +250,7 @@ class CTFTrainEnv:
             "length": self._stats["length"],
             "learner_team": self._team.value,
             "opponent": self._opponent_label,
+            "map": self._map.label,  # type: ignore[union-attr]  # "" without a maps pool
             "snapshot_step": self._opponent_snapshot_step,  # None unless a league snapshot was played
             "phase": self._runtime.phase.name,  # type: ignore[union-attr]
             "fixed_spawns": self._fixed_spawns,

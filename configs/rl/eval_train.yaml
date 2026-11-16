@@ -35,8 +35,8 @@ held_out:
   episodes: 10
   opponents: [scripted_leash, scripted_chaser]
   maps:
-    - {label: center_pillar, path: configs/maps/center_pillar.yaml}
-    - {label: two_corridors, path: configs/maps/two_corridors.yaml}
+    - {label: center_gate, path: configs/maps/center_gate.yaml}
+    - {label: long_wall_south, path: configs/maps/long_wall_south.yaml}
 
 role_swap:
   enabled: true

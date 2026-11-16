@@ -99,6 +99,7 @@ curriculum:
         spawn_mode: shuffle        # same cells, random assignment (corners are mirror-symmetric)
         red_spawns: [[0, 0], [0, 6], [2, 0], [2, 6]]
         blue_spawns: [[10, 0], [10, 6], [8, 0], [8, 6]]
+      maps: []
       opponents:
         - {kind: stay, label: stay, weight: 1.0, params: {}}
         - {kind: random, label: random, weight: 1.0, params: {}}
@@ -114,6 +115,7 @@ curriculum:
         visibility_radius: 6
         spawn_mode: near_base
         spawn_allow_base: true
+      maps: []
       opponents:
         - kind: scripted
           label: scripted_leash
@@ -136,6 +138,17 @@ curriculum:
         visibility_radius: 3
         spawn_mode: near_base
         spawn_allow_base: true
+      # Training pool of layouts (configs/maps/*.yaml): each episode draws one map by weight; only walls, bases and
+      # spawn cells come from the file, the rules stay the base config's. Empty = every episode uses the base map
+      # (configs/ctf_v2.yaml). Every pool map must be 11x7 and mirror symmetric (checked at startup), and none may
+      # be a held-out map of noise_free_eval (center_gate and long_wall_south stay unseen to measure transfer).
+      # `env_overrides` must not contain obstacles / red_base / blue_base / red_spawns / blue_spawns when a pool is set.
+      maps:
+        - {path: configs/maps/default.yaml, label: default, weight: 2.0}
+        - {path: configs/maps/center_pillar.yaml, label: center_pillar, weight: 1.0}
+        - {path: configs/maps/open_field.yaml, label: open_field, weight: 1.0}
+        - {path: configs/maps/pillars.yaml, label: pillars, weight: 1.0}
+        - {path: configs/maps/two_corridors.yaml, label: two_corridors, weight: 1.0}
       opponents:
         - kind: scripted
           label: scripted_leash

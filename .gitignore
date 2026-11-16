@@ -49,3 +49,5 @@ Thumbs.db
 !runs/colab_run1
 *.patch
 rl_*_files.zip
+
+!runs/v2_run2_multimap/

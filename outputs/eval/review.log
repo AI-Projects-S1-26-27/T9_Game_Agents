@@ -1,8 +1,5 @@
-+ uv run python -m rl.evaluate --checkpoint runs/v2_run1/checkpoints/step_0006000640.pt --eval-config configs/rl/eval.yaml --out outputs/eval/v2_run1_6.0M.json
-   Building multi-agent-ctf @ file:///Users/aaravgang/Desktop/Multiagent_CTF
-      Built multi-agent-ctf @ file:///Users/aaravgang/Desktop/Multiagent_CTF
-Uninstalled 1 package in 2ms
-Installed 1 package in 3ms
+
+=== [..........] 0/3  6.0M full eval  (elapsed 0s) ===
   vs random             as red  87/100 wins
   vs random             as blue 84/100 wins
   vs stay               as red  77/100 wins
@@ -15,3 +12,268 @@ Installed 1 package in 3ms
   vs scripted_chaser    as blue 97/100 wins
   vs scripted_escort    as red  94/100 wins
   vs scripted_escort    as blue 96/100 wins
+  vs minimax            as red  100/100 wins
+  vs minimax            as blue 100/100 wins
+  vs classical          as red  82/100 wins
+  vs classical          as blue 83/100 wins
+  [center_gate] vs scripted_leash     as red  0/20 wins
+  [center_gate] vs scripted_leash     as blue 0/20 wins
+  [center_gate] vs scripted_parked    as red  0/20 wins
+  [center_gate] vs scripted_parked    as blue 0/20 wins
+  [center_gate] vs scripted_chaser    as red  2/20 wins
+  [center_gate] vs scripted_chaser    as blue 3/20 wins
+  [center_gate] vs scripted_escort    as red  1/20 wins
+  [center_gate] vs scripted_escort    as blue 2/20 wins
+  [center_pillar] vs scripted_leash     as red  19/20 wins
+  [center_pillar] vs scripted_leash     as blue 18/20 wins
+  [center_pillar] vs scripted_parked    as red  18/20 wins
+  [center_pillar] vs scripted_parked    as blue 17/20 wins
+  [center_pillar] vs scripted_chaser    as red  18/20 wins
+  [center_pillar] vs scripted_chaser    as blue 19/20 wins
+  [center_pillar] vs scripted_escort    as red  18/20 wins
+  [center_pillar] vs scripted_escort    as blue 16/20 wins
+  [long_wall_south] vs scripted_leash     as red  0/20 wins
+  [long_wall_south] vs scripted_leash     as blue 0/20 wins
+  [long_wall_south] vs scripted_parked    as red  0/20 wins
+  [long_wall_south] vs scripted_parked    as blue 0/20 wins
+  [long_wall_south] vs scripted_chaser    as red  0/20 wins
+  [long_wall_south] vs scripted_chaser    as blue 0/20 wins
+  [long_wall_south] vs scripted_escort    as red  0/20 wins
+  [long_wall_south] vs scripted_escort    as blue 0/20 wins
+  [open_field] vs scripted_leash     as red  12/20 wins
+  [open_field] vs scripted_leash     as blue 7/20 wins
+  [open_field] vs scripted_parked    as red  7/20 wins
+  [open_field] vs scripted_parked    as blue 6/20 wins
+  [open_field] vs scripted_chaser    as red  14/20 wins
+  [open_field] vs scripted_chaser    as blue 10/20 wins
+  [open_field] vs scripted_escort    as red  9/20 wins
+  [open_field] vs scripted_escort    as blue 7/20 wins
+  [pillars] vs scripted_leash     as red  12/20 wins
+  [pillars] vs scripted_leash     as blue 10/20 wins
+  [pillars] vs scripted_parked    as red  5/20 wins
+  [pillars] vs scripted_parked    as blue 2/20 wins
+  [pillars] vs scripted_chaser    as red  17/20 wins
+  [pillars] vs scripted_chaser    as blue 17/20 wins
+  [pillars] vs scripted_escort    as red  12/20 wins
+  [pillars] vs scripted_escort    as blue 8/20 wins
+  [two_corridors] vs scripted_leash     as red  4/20 wins
+  [two_corridors] vs scripted_leash     as blue 8/20 wins
+  [two_corridors] vs scripted_parked    as red  7/20 wins
+  [two_corridors] vs scripted_parked    as blue 8/20 wins
+  [two_corridors] vs scripted_chaser    as red  9/20 wins
+  [two_corridors] vs scripted_chaser    as blue 9/20 wins
+  [two_corridors] vs scripted_escort    as red  7/20 wins
+  [two_corridors] vs scripted_escort    as blue 7/20 wins
+  role-swap games vs scripted_chaser    as red
+  role-swap games vs scripted_chaser    as blue
+  role-swap games vs scripted_escort    as red
+  role-swap games vs scripted_escort    as blue
+  policy check vs scripted_leash     argmax   38/40 wins
+  policy check vs scripted_leash     sampled  37/40 wins
+  policy check vs scripted_chaser    argmax   40/40 wins
+  policy check vs scripted_chaser    sampled  40/40 wins
+  policy check vs scripted_escort    argmax   36/40 wins
+  policy check vs scripted_escort    sampled  36/40 wins
+
+checkpoint: runs/v2_run1/checkpoints/step_0006000640.pt  (step 6000640)
+env: 11x7, 4 agents/team, radius 3, spawns near_base  policy: argmax  episodes/opponent: 200  intervals: 95% (Wilson for rates)
+
+opponent          side      n   win%      win CI  draw%  loss%   len  pick%   1st  conv%  tag+  tag-  stay%  scout%
+random            all     200  85.5 [  80,  90]  14.5   0.0  54.4 100.0  13.4  65.3  0.09  0.46   37.2    52.4
+                  red     100  87.0 [  79,  92]  13.0   0.0  51.9 100.0  13.4  68.5  0.09  0.40   36.9    52.2
+                  blue    100  84.0 [  76,  90]  16.0   0.0  56.9 100.0  13.4  62.2  0.09  0.51   37.5    52.6
+stay              all     200  77.5 [  71,  83]  22.5   0.0  66.4 100.0  13.4  63.3  0.00  0.45   45.8    53.1
+                  red     100  77.0 [  68,  84]  23.0   0.0  67.1 100.0  13.3  62.6  0.00  0.46   45.7    52.7
+                  blue    100  78.0 [  69,  85]  22.0   0.0  65.7 100.0  13.6  63.9  0.00  0.44   45.8    53.5
+scripted_leash    all     200  95.5 [  92,  98]   4.0   0.5  35.3 100.0  12.9  80.3  2.00  0.23   31.9    49.3
+                  red     100  96.0 [  90,  98]   4.0   0.0  35.4 100.0  12.9  81.4  2.00  0.22   32.1    49.0
+                  blue    100  95.0 [  89,  98]   4.0   1.0  35.3 100.0  12.9  79.2  1.99  0.24   31.8    49.7
+scripted_parked   all     200  84.5 [  79,  89]  15.5   0.0  55.3 100.0  14.6  73.2  2.00  0.31   43.7    50.2
+                  red     100  87.0 [  79,  92]  13.0   0.0  51.1 100.0  14.8  77.0  2.00  0.26   43.2    50.0
+                  blue    100  82.0 [  73,  88]  18.0   0.0  59.6 100.0  14.5  69.5  2.00  0.36   44.1    50.4
+scripted_chaser   all     200  97.0 [  94,  99]   3.0   0.0  33.2 100.0  13.4  89.4  2.00  0.12   28.7    49.8
+                  red     100  97.0 [  92,  99]   3.0   0.0  33.4 100.0  13.4  89.0  2.00  0.12   29.0    50.2
+                  blue    100  97.0 [  92,  99]   3.0   0.0  32.9 100.0  13.3  89.8  2.00  0.11   28.3    49.3
+scripted_escort   all     200  95.0 [  91,  97]   5.0   0.0  36.1 100.0  13.2  90.0  2.00  0.10   32.2    50.9
+                  red     100  94.0 [  88,  97]   6.0   0.0  38.0 100.0  13.3  87.9  2.00  0.13   34.3    51.2
+                  blue    100  96.0 [  90,  98]   4.0   0.0  34.3 100.0  13.2  92.3  2.00  0.08   30.0    50.6
+minimax           all     200 100.0 [  98, 100]   0.0   0.0  27.7 100.0  13.4  99.0  2.00  0.01   34.2    47.8
+                  red     100 100.0 [  96, 100]   0.0   0.0  27.7 100.0  13.4  99.0  2.00  0.01   34.5    47.9
+                  blue    100 100.0 [  96, 100]   0.0   0.0  27.7 100.0  13.4  99.0  2.00  0.01   34.0    47.7
+classical         all     200  82.5 [  77,  87]  17.5   0.0  58.8 100.0  14.4  70.2  2.00  0.35   49.5    49.2
+                  red     100  82.0 [  73,  88]  18.0   0.0  59.7 100.0  14.5  69.5  2.00  0.36   50.4    49.2
+                  blue    100  83.0 [  74,  89]  17.0   0.0  57.8 100.0  14.4  70.9  2.00  0.34   48.5    49.2
+
+route: top share of centre-column entries by route_roles (all sides) | defender distance base / flag:
+  random             top 65% of  731 entries | while carrying: top 100% | defender   1.3 /   1.3
+  stay               top 66% of  761 entries | while carrying: top 100% | defender   1.5 /   1.5
+  scripted_leash     top 65% of  742 entries | while carrying: top 100% | defender   1.0 /   1.0
+  scripted_parked    top 65% of  750 entries | while carrying: top 100% | defender   1.1 /   1.1
+  scripted_chaser    top 69% of  789 entries | while carrying: top 100% | defender   1.1 /   1.1
+  scripted_escort    top 66% of  767 entries | while carrying: top 100% | defender   1.1 /   1.1
+  minimax            top 70% of  796 entries | while carrying: top 100% | defender   0.7 /   0.7
+  classical          top 67% of  736 entries | while carrying: top 100% | defender   0.8 /   0.8
+
+held-out maps (maps the policy was not trained on; sides pooled; intervals 95% Wilson)
+  map               opponent              n   win%      win CI  draw%  loss%
+  center_gate       scripted_leash       40   0.0 [   0,   9]  75.0  25.0
+  center_gate       scripted_parked      40   0.0 [   0,   9]  70.0  30.0
+  center_gate       scripted_chaser      40  12.5 [   5,  26]  62.5  25.0
+  center_gate       scripted_escort      40   7.5 [   3,  20]  25.0  67.5
+  center_gate       (mean over opponents)         5.0
+  center_pillar     scripted_leash       40  92.5 [  80,  97]   5.0   2.5
+  center_pillar     scripted_parked      40  87.5 [  74,  95]  10.0   2.5
+  center_pillar     scripted_chaser      40  92.5 [  80,  97]   7.5   0.0
+  center_pillar     scripted_escort      40  85.0 [  71,  93]  15.0   0.0
+  center_pillar     (mean over opponents)        89.4
+  long_wall_south   scripted_leash       40   0.0 [   0,   9]  92.5   7.5
+  long_wall_south   scripted_parked      40   0.0 [   0,   9]  95.0   5.0
+  long_wall_south   scripted_chaser      40   0.0 [   0,   9]  90.0  10.0
+  long_wall_south   scripted_escort      40   0.0 [   0,   9]  92.5   7.5
+  long_wall_south   (mean over opponents)         0.0
+  open_field        scripted_leash       40  47.5 [  33,  63]  45.0   7.5
+  open_field        scripted_parked      40  32.5 [  20,  48]  50.0  17.5
+  open_field        scripted_chaser      40  60.0 [  45,  74]  10.0  30.0
+  open_field        scripted_escort      40  40.0 [  26,  55]   7.5  52.5
+  open_field        (mean over opponents)        45.0
+  pillars           scripted_leash       40  55.0 [  40,  69]  22.5  22.5
+  pillars           scripted_parked      40  17.5 [   9,  32]  75.0   7.5
+  pillars           scripted_chaser      40  85.0 [  71,  93]   7.5   7.5
+  pillars           scripted_escort      40  50.0 [  35,  65]  20.0  30.0
+  pillars           (mean over opponents)        51.9
+  two_corridors     scripted_leash       40  30.0 [  18,  45]  42.5  27.5
+  two_corridors     scripted_parked      40  37.5 [  24,  53]  47.5  15.0
+  two_corridors     scripted_chaser      40  45.0 [  31,  60]  15.0  40.0
+  two_corridors     scripted_escort      40  35.0 [  22,  50]  22.5  42.5
+  two_corridors     (mean over opponents)        36.9
+
+role-swap check (REPORT ONLY, no pass/fail): share of decisions whose argmax action changes when the roles are swapped. 0 = the policy ignores its roles; an UNTRAINED network already scores roughly 55-96% (it depends on the seed), so neither a high nor a low value says how well roles are used. Judge role specialisation from the per-role behaviour above.
+  attacker<->defender     71.5% [  70,  73] of   3390 decisions
+  attacker<->scout        86.4% [  85,  88] of   3390 decisions
+  defender<->scout        38.1% [  36,  40] of   2542 decisions
+  overall  67.8% of 9322 decisions changed
+
+argmax vs sampled actions (same seeded games; difference = argmax win% - sampled win%, approximate interval):
+  opponent           argmax win% sampled win%   diff        diff CI  top-prob a/s
+  scripted_leash            95.0         92.5   +2.5  [  -10,  +15]     0.77/0.80
+  scripted_chaser          100.0        100.0   +0.0  [   -9,   +9]     0.83/0.84
+  scripted_escort           90.0         90.0   +0.0  [  -14,  +14]     0.73/0.76
+
+wrote output2/v2_run1_6.0M.json
+
+=== [###.......] 1/3  8.0M held-out maps  (elapsed 663s) ===
+  vs random             as red  89/100 wins
+  vs random             as blue 88/100 wins
+  [center_gate] vs scripted_leash     as red  1/20 wins
+  [center_gate] vs scripted_leash     as blue 0/20 wins
+  [center_gate] vs scripted_parked    as red  1/20 wins
+  [center_gate] vs scripted_parked    as blue 0/20 wins
+  [center_gate] vs scripted_chaser    as red  7/20 wins
+  [center_gate] vs scripted_chaser    as blue 6/20 wins
+  [center_gate] vs scripted_escort    as red  6/20 wins
+  [center_gate] vs scripted_escort    as blue 5/20 wins
+  [center_pillar] vs scripted_leash     as red  17/20 wins
+  [center_pillar] vs scripted_leash     as blue 17/20 wins
+  [center_pillar] vs scripted_parked    as red  19/20 wins
+  [center_pillar] vs scripted_parked    as blue 18/20 wins
+  [center_pillar] vs scripted_chaser    as red  19/20 wins
+  [center_pillar] vs scripted_chaser    as blue 17/20 wins
+  [center_pillar] vs scripted_escort    as red  19/20 wins
+  [center_pillar] vs scripted_escort    as blue 18/20 wins
+  [long_wall_south] vs scripted_leash     as red  0/20 wins
+  [long_wall_south] vs scripted_leash     as blue 0/20 wins
+  [long_wall_south] vs scripted_parked    as red  0/20 wins
+  [long_wall_south] vs scripted_parked    as blue 0/20 wins
+  [long_wall_south] vs scripted_chaser    as red  0/20 wins
+  [long_wall_south] vs scripted_chaser    as blue 0/20 wins
+  [long_wall_south] vs scripted_escort    as red  0/20 wins
+  [long_wall_south] vs scripted_escort    as blue 0/20 wins
+  [open_field] vs scripted_leash     as red  8/20 wins
+  [open_field] vs scripted_leash     as blue 2/20 wins
+  [open_field] vs scripted_parked    as red  4/20 wins
+  [open_field] vs scripted_parked    as blue 3/20 wins
+  [open_field] vs scripted_chaser    as red  7/20 wins
+  [open_field] vs scripted_chaser    as blue 8/20 wins
+  [open_field] vs scripted_escort    as red  6/20 wins
+  [open_field] vs scripted_escort    as blue 5/20 wins
+  [pillars] vs scripted_leash     as red  9/20 wins
+  [pillars] vs scripted_leash     as blue 10/20 wins
+  [pillars] vs scripted_parked    as red  6/20 wins
+  [pillars] vs scripted_parked    as blue 2/20 wins
+  [pillars] vs scripted_chaser    as red  11/20 wins
+  [pillars] vs scripted_chaser    as blue 15/20 wins
+  [pillars] vs scripted_escort    as red  8/20 wins
+  [pillars] vs scripted_escort    as blue 7/20 wins
+  [two_corridors] vs scripted_leash     as red  3/20 wins
+  [two_corridors] vs scripted_leash     as blue 1/20 wins
+  [two_corridors] vs scripted_parked    as red  3/20 wins
+  [two_corridors] vs scripted_parked    as blue 5/20 wins
+  [two_corridors] vs scripted_chaser    as red  11/20 wins
+  [two_corridors] vs scripted_chaser    as blue 12/20 wins
+  [two_corridors] vs scripted_escort    as red  4/20 wins
+  [two_corridors] vs scripted_escort    as blue 5/20 wins
+
+checkpoint: runs/v2_run1/checkpoints/step_0008001536.pt  (step 8001536)
+env: 11x7, 4 agents/team, radius 3, spawns near_base  policy: argmax  episodes/opponent: 200  intervals: 95% (Wilson for rates)
+
+opponent          side      n   win%      win CI  draw%  loss%   len  pick%   1st  conv%  tag+  tag-  stay%  scout%
+random            all     200  88.5 [  83,  92]  11.5   0.0  48.3 100.0  12.9  69.4  0.09  0.39   15.0    57.4
+                  red     100  89.0 [  81,  94]  11.0   0.0  47.1 100.0  12.8  72.4  0.09  0.34   15.9    57.3
+                  blue    100  88.0 [  80,  93]  12.0   0.0  49.4 100.0  12.9  66.7  0.08  0.44   14.2    57.6
+
+route: top share of centre-column entries by route_roles (all sides) | defender distance base / flag:
+  random             top 67% of  758 entries | while carrying: top 100% | defender   1.0 /   1.0
+
+held-out maps (maps the policy was not trained on; sides pooled; intervals 95% Wilson)
+  map               opponent              n   win%      win CI  draw%  loss%
+  center_gate       scripted_leash       40   2.5 [   0,  13]  52.5  45.0
+  center_gate       scripted_parked      40   2.5 [   0,  13]  57.5  40.0
+  center_gate       scripted_chaser      40  32.5 [  20,  48]  20.0  47.5
+  center_gate       scripted_escort      40  27.5 [  16,  43]   5.0  67.5
+  center_gate       (mean over opponents)        16.2
+  center_pillar     scripted_leash       40  85.0 [  71,  93]  12.5   2.5
+  center_pillar     scripted_parked      40  92.5 [  80,  97]   7.5   0.0
+  center_pillar     scripted_chaser      40  90.0 [  77,  96]   5.0   5.0
+  center_pillar     scripted_escort      40  92.5 [  80,  97]   7.5   0.0
+  center_pillar     (mean over opponents)        90.0
+  long_wall_south   scripted_leash       40   0.0 [   0,   9]  87.5  12.5
+  long_wall_south   scripted_parked      40   0.0 [   0,   9]  92.5   7.5
+  long_wall_south   scripted_chaser      40   0.0 [   0,   9]  90.0  10.0
+  long_wall_south   scripted_escort      40   0.0 [   0,   9]  90.0  10.0
+  long_wall_south   (mean over opponents)         0.0
+  open_field        scripted_leash       40  25.0 [  14,  40]  35.0  40.0
+  open_field        scripted_parked      40  17.5 [   9,  32]  45.0  37.5
+  open_field        scripted_chaser      40  37.5 [  24,  53]   7.5  55.0
+  open_field        scripted_escort      40  27.5 [  16,  43]   5.0  67.5
+  open_field        (mean over opponents)        26.9
+  pillars           scripted_leash       40  47.5 [  33,  63]  20.0  32.5
+  pillars           scripted_parked      40  20.0 [  10,  35]  55.0  25.0
+  pillars           scripted_chaser      40  65.0 [  50,  78]   2.5  32.5
+  pillars           scripted_escort      40  37.5 [  24,  53]   5.0  57.5
+  pillars           (mean over opponents)        42.5
+  two_corridors     scripted_leash       40  10.0 [   4,  23]  35.0  55.0
+  two_corridors     scripted_parked      40  20.0 [  10,  35]  40.0  40.0
+  two_corridors     scripted_chaser      40  57.5 [  42,  71]   2.5  40.0
+  two_corridors     scripted_escort      40  22.5 [  12,  38]   7.5  70.0
+  two_corridors     (mean over opponents)        27.5
+
+wrote output2/v2_run1_8.0M_heldout.json
+
+=== [#######...] 2/3  6.0M vs minimax depth 3 (100 games)  (elapsed 862s) ===
+  vs minimax            as red  44/50 wins
+  vs minimax            as blue 45/50 wins
+
+checkpoint: runs/v2_run1/checkpoints/step_0006000640.pt  (step 6000640)
+env: 11x7, 4 agents/team, radius 3, spawns near_base  policy: argmax  episodes/opponent: 100  intervals: 95% (Wilson for rates)
+
+opponent          side      n   win%      win CI  draw%  loss%   len  pick%   1st  conv%  tag+  tag-  stay%  scout%
+minimax           all     100  89.0 [  81,  94]  11.0   0.0  46.5 100.0  13.5  80.2  1.99  0.22   42.4    49.6
+                  red      50  88.0 [  76,  94]  12.0   0.0  48.3 100.0  13.7  78.6  1.98  0.24   43.8    49.3
+                  blue     50  90.0 [  79,  96]  10.0   0.0  44.6 100.0  13.4  81.8  2.00  0.20   40.9    49.8
+
+route: top share of centre-column entries by route_roles (all sides) | defender distance base / flag:
+  minimax            top 68% of  382 entries | while carrying: top 100% | defender   1.0 /   1.0
+
+wrote output2/v2_run1_6.0M_minimax3.json
+
+=== [##########] 3/3  ALL_DONE  (elapsed 1073s) ===

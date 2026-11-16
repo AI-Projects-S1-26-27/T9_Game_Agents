@@ -1,0 +1,258 @@
+run:
+  name: v2_run2_multimap
+  output_dir: /content/drive/MyDrive/ctf_runs
+  seed: 0
+  device: cuda
+  torch_threads: 1
+  checkpoint_every_steps: 250000
+  keep_checkpoints: 0
+  log_every_updates: 1
+  tensorboard: true
+env:
+  config_path: configs/ctf_v2.yaml
+roles:
+  slots:
+  - attacker
+  - attacker
+  - defender
+  - scout
+features:
+  mirror_blue: true
+  staleness_horizon: 50
+rewards:
+  win: 10.0
+  loss: -10.0
+  timeout: -1.0
+  pickup: 2.0
+  tagged_while_carrying: -2.0
+  tag_enemy_carrier: 2.0
+  tag_team_share: 0.5
+  attacker_potential: 0.05
+  attacker_carry_potential: 0.2
+  carry_step_penalty: -0.02
+  defender_potential: 0.02
+  scout_new_cell: 0.05
+  scout_anneal_steps: 3000000
+  scout_floor_fraction: 0.3
+  step_penalty: -0.002
+  outcome_share_attacker: 1.0
+  outcome_share_defender: 0.7
+  outcome_share_scout: 0.5
+  escort_bonus: 0.02
+  escort_radius: 0
+  escort_roles:
+  - attacker
+  - scout
+  defender_intercept_potential: 0.06
+model:
+  conv_channels:
+  - 16
+  - 16
+  kernel_size: 3
+  hidden_size: 128
+ppo:
+  learning_rate: 0.0001
+  learning_rate_final: 3.0e-05
+  gamma: 0.99
+  gae_lambda: 0.95
+  clip_epsilon: 0.2
+  entropy_coef: 0.01
+  entropy_coef_final: 0.003
+  value_coef: 0.5
+  max_grad_norm: 0.5
+  epochs: 4
+  num_minibatches: 4
+  adam_eps: 1.0e-05
+  normalize_advantages: true
+  value_normalization: true
+rollout:
+  num_envs: 16
+  num_workers: 2
+  rollout_length: 128
+  total_steps: 9000000
+curriculum:
+  learner_side: random
+  phases:
+  - name: learn_the_task
+    max_steps: 1000000
+    advance_win_rate: 0.7
+    window_episodes: 200
+    fixed_spawn_fraction: 0.0
+    env_overrides:
+      blue_spawns:
+      - - 10
+        - 0
+      - - 10
+        - 6
+      - - 8
+        - 0
+      - - 8
+        - 6
+      red_spawns:
+      - - 0
+        - 0
+      - - 0
+        - 6
+      - - 2
+        - 0
+      - - 2
+        - 6
+      spawn_mode: shuffle
+      visibility_radius: 20
+    opponent_noise: 0.0
+    opponents:
+    - kind: stay
+      label: stay
+      weight: 1.0
+      params: {}
+    - kind: random
+      label: random
+      weight: 1.0
+      params: {}
+    maps: []
+  - name: handle_defenders
+    max_steps: 1500000
+    advance_win_rate: 0.7
+    window_episodes: 200
+    fixed_spawn_fraction: 0.3
+    env_overrides:
+      spawn_allow_base: true
+      spawn_mode: near_base
+      visibility_radius: 6
+    opponent_noise: 0.05
+    opponents:
+    - kind: scripted
+      label: scripted_leash
+      weight: 2.0
+      params:
+        chase_radius: 0
+        escort: false
+        guard_leash: 2
+        guard_mode: leash
+        roles:
+        - attacker
+        - attacker
+        - defender
+        - scout
+        scout_behavior: random
+    - kind: scripted
+      label: scripted_parked
+      weight: 1.0
+      params:
+        chase_radius: 0
+        escort: false
+        guard_leash: 0
+        guard_mode: on_flag
+        roles:
+        - attacker
+        - attacker
+        - defender
+        - scout
+        scout_behavior: stay
+    - kind: random
+      label: random
+      weight: 1.0
+      params: {}
+    maps: []
+  - name: real_setting
+    max_steps: 2500000
+    advance_win_rate: 1.0
+    window_episodes: 200
+    fixed_spawn_fraction: 0.5
+    env_overrides:
+      spawn_allow_base: true
+      spawn_mode: near_base
+      visibility_radius: 3
+    opponent_noise: 0.03
+    opponents:
+    - kind: scripted
+      label: scripted_leash
+      weight: 2.0
+      params:
+        chase_radius: 0
+        escort: false
+        guard_leash: 2
+        guard_mode: leash
+        roles:
+        - attacker
+        - attacker
+        - defender
+        - scout
+        scout_behavior: random
+    - kind: scripted
+      label: scripted_parked
+      weight: 1.0
+      params:
+        chase_radius: 0
+        escort: false
+        guard_leash: 0
+        guard_mode: on_flag
+        roles:
+        - attacker
+        - attacker
+        - defender
+        - scout
+        scout_behavior: stay
+    - kind: scripted
+      label: scripted_chaser
+      weight: 2.0
+      params:
+        chase_radius: 4
+        escort: false
+        guard_leash: 0
+        guard_mode: chaser
+        roles:
+        - attacker
+        - attacker
+        - defender
+        - scout
+        scout_behavior: random
+    - kind: scripted
+      label: scripted_escort
+      weight: 2.0
+      params:
+        chase_radius: 0
+        escort: true
+        guard_leash: 3
+        guard_mode: leash
+        roles:
+        - attacker
+        - attacker
+        - defender
+        - scout
+        scout_behavior: stay
+    - kind: random
+      label: random
+      weight: 0.5
+      params: {}
+    - kind: stay
+      label: stay
+      weight: 0.5
+      params: {}
+    maps:
+    - path: configs/maps/default.yaml
+      label: default
+      weight: 2.0
+    - path: configs/maps/center_pillar.yaml
+      label: center_pillar
+      weight: 1.0
+    - path: configs/maps/open_field.yaml
+      label: open_field
+      weight: 1.0
+    - path: configs/maps/pillars.yaml
+      label: pillars
+      weight: 1.0
+    - path: configs/maps/two_corridors.yaml
+      label: two_corridors
+      weight: 1.0
+noise_free_eval:
+  enabled: true
+  every_steps: 500000
+  at_end: true
+  config_path: configs/rl/eval_train.yaml
+  overrides: {}
+league:
+  snapshot_every_steps: 0
+  keep_snapshots: 0
+  cache_size: 4
+  directory: ''

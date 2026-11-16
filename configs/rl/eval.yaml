@@ -45,8 +45,14 @@ opponents:
       max_nodes: 4000
       alpha_beta: true
       weights: {win: 1000.0, carry_progress: 4.0, pickup: 20.0, approach: 1.0, approach_others: 0.5, escort: 2.0, enemy_carry_progress: 4.0, enemy_pickup: 20.0, defend: 1.0, alive: 3.0, pressure: 1.5}
-  # classical AI and LLM opponents: add entries here once their kinds are registered in
-  # rl.evaluate.EXTERNAL_OPPONENTS (docs/evaluation.md explains how).
+  # The classical AI (src/classical_ai: A* + influence map + behaviour tree, written by a teammate). Its roles are
+  # fixed per slot here; its own default assignment is positional over ACTIVE agents and is wrong for v2.
+  # About 0.5 ms per decision. Smoke-tested on v2 (docs/evaluation.md lists what it does not know).
+  - kind: classical
+    label: classical
+    params: {roles: [attacker, attacker, defender, scout]}
+  # An LLM opponent has no hookup (it cannot run on Colab): register a factory in
+  # rl.evaluate.EXTERNAL_OPPONENTS and add its entry here (docs/evaluation.md explains how).
 
 # --- extra checks -----------------------------------------------------------------------------
 # Held-out maps: other 11x7 layouts (configs/maps) the policy was never trained on (training uses the

@@ -89,10 +89,12 @@ played on a 4-agent map. See `src/rl/checkpoint.py` (`migrate_config`, `Observat
 
 ## Opponents
 
-Opponent kinds (`random`, `stay`, `scripted`, `minimax`) are built from YAML entries; see `src/rl/opponents.py`.
+Opponent kinds (`random`, `stay`, `scripted`, `minimax`, `classical`) are built from YAML entries; see `src/rl/opponents.py`.
 `minimax` is a depth-limited alpha-beta searcher over joint team moves (`src/rl/minimax.py`, explained in
 `docs/minimax.md`). It is meant as a strong fixed evaluation opponent; it is also available in the viewer
 (`uv run python -m viz play --map configs/ctf_v2.yaml --red scripted --blue minimax`).
+`classical` is the teammate's A* + behaviour-tree team (`src/classical_ai`, copied unchanged from the `classical_ai`
+branch) with fixed roles per slot; it works in the evaluation and the viewer (`--blue classical`), see `docs/classical.md`.
 
 ## Evaluation
 
@@ -162,6 +164,7 @@ All parameters have a single default in `src/ctf/config.py`; YAML files override
 - Full Prototype 1 spec: [docs/environment.md](docs/environment.md)
 - Evaluation: [docs/evaluation.md](docs/evaluation.md)
 - Minimax opponent: [docs/minimax.md](docs/minimax.md)
+- Classical AI opponent: [docs/classical.md](docs/classical.md)
 
 ## Layout
 

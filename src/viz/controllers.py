@@ -8,6 +8,7 @@ from random import Random
 from typing import Any
 
 from ctf.config import CTFConfig
+from rl.classical_opponent import ClassicalParams
 from rl.config import OpponentSpec
 from rl.opponents import KNOWN_KINDS, ScriptedParams, build_opponent
 from rl.schema import ConfigError, from_dict, read_yaml
@@ -28,8 +29,8 @@ class ControllerSpec:
     checkpoint: str  # path to a .pt file (kind=rl); "" otherwise
     deterministic: bool  # rl: argmax instead of sampling
     params: dict[str, Any]
-    # Role label shown on each team slot for kinds that do not use roles themselves (random, stay).
-    # Display only: it changes how the players are labelled, never how they move. Scripted teams take
+    # Role label shown on each team slot for kinds that do not use roles themselves (random, stay, minimax).
+    # Display only: it changes how the players are labelled, never how they move. Scripted and classical teams take
     # their roles from params and RL teams from the checkpoint. Empty = show "unknown".
     roles: list[str] = field(default_factory=list)
 
@@ -77,8 +78,8 @@ class ControllerFactory:
             return self._build_rl(spec, env_config, seed)
         rng = Random(seed)
         strategy = build_opponent(OpponentSpec(spec.kind, spec.kind, 1.0, spec.params), env_config, rng)
-        if spec.kind == "scripted":
-            params = from_dict(ScriptedParams, spec.params)
+        if spec.kind in ("scripted", "classical"):  # their roles are real settings, not display labels
+            params = from_dict(ScriptedParams if spec.kind == "scripted" else ClassicalParams, spec.params)
             roles = [r.value for r in params.roles]
         elif spec.roles:
             if len(spec.roles) != n:

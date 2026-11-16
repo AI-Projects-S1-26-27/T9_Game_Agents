@@ -13,6 +13,8 @@ Kinds (selected by ``OpponentSpec.kind`` in the curriculum config):
 ``minimax``   depth-limited alpha-beta search over joint team moves (``rl/minimax.py``, params in
               ``MinimaxParams``). Slower than the others (about 10 ms per decision at depth 2), so it is
               mainly an evaluation opponent; see docs/minimax.md.
+``classical`` the teammate's classical AI (A* + influence map + behaviour tree, ``src/classical_ai``) with fixed roles
+              from ``params.roles``; see rl/classical_opponent.py. Mainly an evaluation / viewer opponent.
 ``checkpoint`` a frozen trained policy: a snapshot drawn from the run's league (``source: league``) or one
               fixed checkpoint file (``source: file``); see rl/league.py. It is exempt from the phase's
               ``opponent_noise`` and plays with the visibility radius of the phase it is built for.
@@ -29,6 +31,7 @@ from ctf.agent import Team
 from ctf.config import CTFConfig
 from ctf.game_state import FlagStatus
 from ctf.observations import TeamObservation
+from rl.classical_opponent import ClassicalOpponent, ClassicalParams
 from rl.config import OpponentSpec
 from rl.league import LeagueStore, build_checkpoint_opponent
 from rl.minimax import MinimaxParams, MinimaxStrategy
@@ -36,7 +39,7 @@ from rl.navigation import MOVES, GridNav
 from rl.schema import ConfigError, from_dict
 from strategies import BaseStrategy, Role, StayStrategy
 
-KNOWN_KINDS = ("random", "stay", "scripted", "minimax", "checkpoint")
+KNOWN_KINDS = ("random", "stay", "scripted", "minimax", "classical", "checkpoint")
 
 
 class GuardMode(str, Enum):
@@ -203,6 +206,8 @@ def build_opponent(
         return ScriptedTeamStrategy(env_config, params, rng)
     if spec.kind == "minimax":
         return MinimaxStrategy(env_config, from_dict(MinimaxParams, spec.params, f"opponent[{spec.kind}].params"), rng)
+    if spec.kind == "classical":
+        return ClassicalOpponent(env_config, from_dict(ClassicalParams, spec.params, f"opponent[{spec.kind}].params"))
     if spec.kind == "checkpoint":
         return build_checkpoint_opponent(spec.params, env_config, rng, league)[0]
     if spec.params:

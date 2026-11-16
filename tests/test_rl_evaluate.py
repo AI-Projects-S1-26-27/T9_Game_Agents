@@ -134,10 +134,10 @@ def test_overrides_go_through_the_same_validation() -> None:
 
 def test_unknown_opponent_kind_and_external_registry(monkeypatch) -> None:
     env_config = small_env_config()
-    odd = EvalOpponent(kind="classical", label="classical", params={})
-    with pytest.raises(ConfigError, match="classical"):
+    odd = EvalOpponent(kind="llm", label="llm", params={})  # not built in (the LLM commander has no hookup)
+    with pytest.raises(ConfigError, match="llm"):
         ev.build_eval_opponent(odd, env_config, Random(0))
-    monkeypatch.setitem(ev.EXTERNAL_OPPONENTS, "classical", lambda spec, cfg, rng: StayStrategy())
+    monkeypatch.setitem(ev.EXTERNAL_OPPONENTS, "llm", lambda spec, cfg, rng: StayStrategy())
     assert isinstance(ev.build_eval_opponent(odd, env_config, Random(0)), StayStrategy)
 
 

@@ -4,7 +4,8 @@
 finished episodes (the returned observation is then the first of the next episode).
 ``SubprocVecEnv`` runs one group per worker process (spawn context, so it behaves the
 same on macOS, Windows and Linux); ``InProcessVecEnv`` is the same thing without
-processes, for debugging and tests. Workers never import torch.
+processes, for debugging and tests. Workers import torch only when the config has league opponents
+(a frozen neural opponent needs it); they then use ``run.torch_threads`` threads and CPU only.
 """
 
 from __future__ import annotations
@@ -12,12 +13,14 @@ from __future__ import annotations
 import multiprocessing as mp
 import traceback
 from dataclasses import dataclass, field
+from pathlib import Path
 
 import numpy as np
 
 from ctf.config import CTFConfig
 from rl.config import RLConfig
 from rl.env_wrapper import CTFTrainEnv, EnvStep
+from rl.league import uses_league_source
 
 
 @dataclass
@@ -60,8 +63,10 @@ def _merge(parts: list[VecStep]) -> VecStep:
 
 
 class EnvGroup:
-    def __init__(self, cfg: RLConfig, base_env_config: CTFConfig, seeds: list[int]) -> None:
-        self.envs = [CTFTrainEnv(cfg, base_env_config, seed) for seed in seeds]
+    def __init__(
+        self, cfg: RLConfig, base_env_config: CTFConfig, seeds: list[int], league_dir: Path | None = None
+    ) -> None:
+        self.envs = [CTFTrainEnv(cfg, base_env_config, seed, league_dir) for seed in seeds]
 
     def reset(self) -> VecStep:
         return _pack([env.reset() for env in self.envs], [])
@@ -98,10 +103,12 @@ def _split(items: list[int], parts: int) -> list[list[int]]:
 
 
 class InProcessVecEnv:
-    def __init__(self, cfg: RLConfig, base_env_config: CTFConfig, seed: int) -> None:
+    def __init__(
+        self, cfg: RLConfig, base_env_config: CTFConfig, seed: int, league_dir: Path | None = None
+    ) -> None:
         self.num_envs = cfg.rollout.num_envs
         self.num_agents = base_env_config.agents_per_team
-        self._group = EnvGroup(cfg, base_env_config, [seed + i for i in range(self.num_envs)])
+        self._group = EnvGroup(cfg, base_env_config, [seed + i for i in range(self.num_envs)], league_dir)
 
     def reset(self) -> VecStep:
         return self._group.reset()
@@ -119,9 +126,15 @@ class InProcessVecEnv:
         pass
 
 
-def _worker_main(conn, cfg: RLConfig, base_env_config: CTFConfig, seeds: list[int]) -> None:
+def _worker_main(
+    conn, cfg: RLConfig, base_env_config: CTFConfig, seeds: list[int], league_dir: Path | None
+) -> None:
     try:
-        group = EnvGroup(cfg, base_env_config, seeds)
+        if uses_league_source(cfg):  # frozen neural opponents: do not let every worker grab all cores
+            import torch
+
+            torch.set_num_threads(cfg.run.torch_threads)
+        group = EnvGroup(cfg, base_env_config, seeds, league_dir)
         while True:
             command, payload = conn.recv()
             if command == "reset":
@@ -143,7 +156,9 @@ def _worker_main(conn, cfg: RLConfig, base_env_config: CTFConfig, seeds: list[in
 
 
 class SubprocVecEnv:
-    def __init__(self, cfg: RLConfig, base_env_config: CTFConfig, seed: int) -> None:
+    def __init__(
+        self, cfg: RLConfig, base_env_config: CTFConfig, seed: int, league_dir: Path | None = None
+    ) -> None:
         self.num_envs = cfg.rollout.num_envs
         self.num_agents = base_env_config.agents_per_team
         ctx = mp.get_context("spawn")
@@ -154,7 +169,7 @@ class SubprocVecEnv:
             parent, child = ctx.Pipe()
             proc = ctx.Process(
                 target=_worker_main,
-                args=(child, cfg, base_env_config, [seed + i for i in ids]),
+                args=(child, cfg, base_env_config, [seed + i for i in ids], league_dir),
                 daemon=True,
             )
             proc.start()
@@ -206,8 +221,10 @@ class SubprocVecEnv:
         self._conns, self._procs = [], []
 
 
-def make_vec_env(cfg: RLConfig, base_env_config: CTFConfig, seed: int):
-    """``rollout.num_workers == 0`` runs in this process; otherwise one process per worker."""
+def make_vec_env(cfg: RLConfig, base_env_config: CTFConfig, seed: int, league_dir: Path | None = None):
+    """``rollout.num_workers == 0`` runs in this process; otherwise one process per worker.
+
+    ``league_dir`` is the folder holding the run's league snapshots (needed only for league opponents)."""
     if cfg.rollout.num_workers == 0:
-        return InProcessVecEnv(cfg, base_env_config, seed)
-    return SubprocVecEnv(cfg, base_env_config, seed)
+        return InProcessVecEnv(cfg, base_env_config, seed, league_dir)
+    return SubprocVecEnv(cfg, base_env_config, seed, league_dir)

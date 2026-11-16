@@ -161,6 +161,15 @@ class NoiseFreeEvalConfig:
 
 
 @dataclass(frozen=True)
+class LeagueConfig:
+    """Snapshots of the learner that ``kind: checkpoint, source: league`` opponents play against (see ``rl.league``)."""
+
+    snapshot_every_steps: int  # save a weights-only snapshot after the update crossing each multiple (0 = never: no league)
+    keep_snapshots: int  # newest snapshots kept on disk (0 = keep all)
+    cache_size: int  # policies each worker process keeps loaded in memory
+
+
+@dataclass(frozen=True)
 class RLConfig:
     run: RunConfig
     env: EnvSection
@@ -172,6 +181,7 @@ class RLConfig:
     rollout: RolloutConfig
     curriculum: CurriculumConfig
     noise_free_eval: NoiseFreeEvalConfig
+    league: LeagueConfig
 
     def __post_init__(self) -> None:
         _validate(self)
@@ -220,6 +230,9 @@ def _validate(cfg: RLConfig) -> None:
     nf = cfg.noise_free_eval
     _check(nf.every_steps >= 1, "noise_free_eval.every_steps must be >= 1")
     _check(bool(nf.config_path) or not nf.enabled, "noise_free_eval.config_path must be set when enabled")
+    from rl.league import validate_league_settings  # imported here: rl.league needs this module's types
+
+    validate_league_settings(cfg)
     capped = sum(ph.max_steps for ph in phases[:-1])
     _check(capped < r.total_steps, "phase max_steps (excluding the last phase) must be < rollout.total_steps")
 
@@ -269,6 +282,7 @@ __all__ = [
     "PhaseConfig",
     "OpponentSpec",
     "NoiseFreeEvalConfig",
+    "LeagueConfig",
     "load_rl_config",
     "load_base_env_config",
     "phase_env_config",

@@ -110,6 +110,7 @@ SECTION_COMPAT: dict[str, dict[str, Any]] = {
     "noise_free_eval": {
         "enabled": False, "every_steps": 1, "at_end": False, "config_path": "configs/rl/eval_train.yaml", "overrides": {},
     },
+    "league": {"snapshot_every_steps": 0, "keep_snapshots": 0, "cache_size": 4},
 }
 SCRIPTED_COMPAT: tuple[tuple[str, Any], ...] = (("chase_radius", 0), ("escort", False))
 
@@ -178,6 +179,11 @@ def restore_training_state(
     value_norm: ValueNorm,
     curriculum: Curriculum,
 ) -> dict[str, int]:
+    if payload.get("weights_only"):
+        raise CheckpointError(
+            "this file is a league snapshot (weights only: no optimizer or curriculum state), so training cannot "
+            "resume from it; resume from a file in <run>/checkpoints/ instead"
+        )
     try:
         model.load_state_dict(payload["model"])
     except RuntimeError as exc:

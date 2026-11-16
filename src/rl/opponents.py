@@ -13,6 +13,8 @@ Kinds (selected by ``OpponentSpec.kind`` in the curriculum config):
 ``minimax``   depth-limited alpha-beta search over joint team moves (``rl/minimax.py``, params in
               ``MinimaxParams``). Slower than the others (about 10 ms per decision at depth 2), so it is
               mainly an evaluation opponent; see docs/minimax.md.
+``checkpoint`` a frozen trained policy: a snapshot drawn from the run's league (``source: league``) or one
+              fixed checkpoint file (``source: file``); see rl/league.py.
 """
 
 from __future__ import annotations
@@ -27,12 +29,13 @@ from ctf.config import CTFConfig
 from ctf.game_state import FlagStatus
 from ctf.observations import TeamObservation
 from rl.config import OpponentSpec
+from rl.league import LeagueStore, build_checkpoint_opponent
 from rl.minimax import MinimaxParams, MinimaxStrategy
 from rl.navigation import MOVES, GridNav
 from rl.schema import ConfigError, from_dict
 from strategies import BaseStrategy, Role, StayStrategy
 
-KNOWN_KINDS = ("random", "stay", "scripted", "minimax")
+KNOWN_KINDS = ("random", "stay", "scripted", "minimax", "checkpoint")
 
 
 class GuardMode(str, Enum):
@@ -186,8 +189,12 @@ class ScriptedTeamStrategy(BaseStrategy):
         return self._rng.choice(options) if options else Action.STAY
 
 
-def build_opponent(spec: OpponentSpec, env_config: CTFConfig, rng: Random) -> BaseStrategy:
-    """Create a fresh opponent from its config entry (raises ConfigError if invalid)."""
+def build_opponent(
+    spec: OpponentSpec, env_config: CTFConfig, rng: Random, league: LeagueStore | None = None
+) -> BaseStrategy:
+    """Create a fresh opponent from its config entry (raises ConfigError if invalid).
+
+    ``league`` is only needed for ``checkpoint`` opponents with ``source: league``."""
     if spec.kind not in KNOWN_KINDS:
         raise ConfigError(f"unknown opponent kind {spec.kind!r}; known kinds: {KNOWN_KINDS}")
     if spec.kind == "scripted":
@@ -195,6 +202,8 @@ def build_opponent(spec: OpponentSpec, env_config: CTFConfig, rng: Random) -> Ba
         return ScriptedTeamStrategy(env_config, params, rng)
     if spec.kind == "minimax":
         return MinimaxStrategy(env_config, from_dict(MinimaxParams, spec.params, f"opponent[{spec.kind}].params"), rng)
+    if spec.kind == "checkpoint":
+        return build_checkpoint_opponent(spec.params, env_config, rng, league)[0]
     if spec.params:
         raise ConfigError(f"opponent kind {spec.kind!r} takes no params, got {sorted(spec.params)}")
     return RandomStrategy(rng) if spec.kind == "random" else StayStrategy()

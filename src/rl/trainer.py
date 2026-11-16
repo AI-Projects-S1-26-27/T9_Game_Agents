@@ -12,6 +12,7 @@ from rl.buffer import RolloutBuffer
 from rl.checkpoint import CheckpointManager, load_checkpoint, restore_training_state
 from rl.config import RLConfig
 from rl.curriculum import Curriculum
+from rl.league import LeagueStore, LeagueWriter, validate_file_opponents
 from rl.mappo import MAPPO, ValueNorm
 from rl.metrics import MetricsLogger, summarize_episodes
 from rl.networks import ActorCritic, NetworkSpec
@@ -56,6 +57,9 @@ class Trainer:
         self.counters = {"total_steps": 0, "update": 0}
         # Fails here, before any training, if the eval YAML is invalid.
         self.evaluator = NoiseFreeEvaluator(cfg, env_config, run_dir) if cfg.noise_free_eval.enabled else None
+        validate_file_opponents(cfg)  # a missing opponent file stops the run now, not hours in
+        self.league_dir = run_dir / "league"
+        self.league = LeagueWriter(self.league_dir, cfg.league.keep_snapshots) if cfg.league.snapshot_every_steps > 0 else None
         if resume_from is not None:
             payload = load_checkpoint(resume_from, map_location="cpu")
             self.counters = restore_training_state(
@@ -96,6 +100,13 @@ class Trainer:
         scalars["schedule/entropy_coef"] = entropy_coef
         scalars["schedule/scout_scale"] = scout_scale
         scalars["perf/steps_per_sec"] = sps
+        if self.league is not None:
+            scalars["league/num_snapshots"] = float(len(LeagueStore(self.league_dir, 1).snapshots()))
+            ages = [self.counters["total_steps"] - e["snapshot_step"] for e in episodes if e.get("snapshot_step") is not None]
+            if episodes:
+                scalars["league/games_fraction"] = len(ages) / len(episodes)
+            if ages:  # how old (in training steps) the snapshots the learner just played against were
+                scalars["league/opponent_age_steps"] = sum(ages) / len(ages)
         return scalars
 
     def _noise_free_eval(self, logger: MetricsLogger) -> None:
@@ -120,7 +131,7 @@ class Trainer:
         steps_per_update = cfg.rollout.rollout_length * cfg.rollout.num_envs
         # Resumed runs use different env seeds than the segment they continue.
         seed = cfg.run.seed + self.counters["update"] * cfg.rollout.num_envs
-        vec = make_vec_env(cfg, self.env_config, seed)
+        vec = make_vec_env(cfg, self.env_config, seed, self.league_dir)
         logger = MetricsLogger(self.run_dir, cfg.run.tensorboard)
         pending: list[dict] = []
         window_start, window_steps = time.time(), 0
@@ -130,6 +141,8 @@ class Trainer:
         every = cfg.noise_free_eval.every_steps
         next_eval = (self.counters["total_steps"] // every + 1) * every
         last_eval_step = -1
+        snap_every = cfg.league.snapshot_every_steps
+        next_snapshot = (self.counters["total_steps"] // snap_every + 1) * snap_every if snap_every > 0 else None
         try:
             vec.set_phase(self.curriculum.index)
             obs = vec.reset()
@@ -169,6 +182,14 @@ class Trainer:
                 if self.counters["total_steps"] >= next_checkpoint:
                     self.checkpoints.save_periodic(self.counters["total_steps"], **self._state())
                     next_checkpoint += cfg.run.checkpoint_every_steps
+
+                if self.league is not None and self.counters["total_steps"] >= next_snapshot:
+                    self.league.save(
+                        self.counters["total_steps"], model=self.model, value_norm=self.value_norm,
+                        counters=self.counters, config=cfg, env_config=self.env_config,
+                    )
+                    while next_snapshot <= self.counters["total_steps"]:
+                        next_snapshot += snap_every
 
                 if self.evaluator is not None and self.counters["total_steps"] >= next_eval:
                     self._noise_free_eval(logger)

@@ -8,6 +8,7 @@ statistics. Phase changes (curriculum) take effect at the next ``reset()``.
 from __future__ import annotations
 
 from dataclasses import dataclass
+from pathlib import Path
 from random import Random
 
 import numpy as np
@@ -19,9 +20,11 @@ from ctf.environment import CTFEnvironment
 from ctf.observations import ObservationMode
 from rl.config import LearnerSide, PhaseConfig, RLConfig, phase_env_config
 from rl.features import ActorFeatures, CriticFeatures, FeatureBuilder
+from rl.league import LeagueStore, build_checkpoint_opponent, get_store, is_league_spec, uses_league_source
 from rl.navigation import GridNav
 from rl.opponents import build_opponent
 from rl.rewards import COMPONENTS, RewardCalculator
+from rl.schema import ConfigError
 from strategies import BaseStrategy
 
 
@@ -44,7 +47,9 @@ class _PhaseRuntime:
 
 
 class CTFTrainEnv:
-    def __init__(self, cfg: RLConfig, base_env_config: CTFConfig, seed: int) -> None:
+    def __init__(
+        self, cfg: RLConfig, base_env_config: CTFConfig, seed: int, league_dir: Path | None = None
+    ) -> None:
         self.cfg = cfg
         self.base_env_config = base_env_config
         self._rng = Random(seed)
@@ -56,6 +61,12 @@ class CTFTrainEnv:
         self._team = Team.RED
         self._opponent: BaseStrategy | None = None
         self._opponent_label = ""
+        self._opponent_snapshot_step: int | None = None  # league opponents: the step of the snapshot being played
+        self._league: LeagueStore | None = None
+        if uses_league_source(cfg):
+            if league_dir is None:
+                raise ValueError("the config has league opponents but no league directory was given")
+            self._league = get_store(league_dir, cfg.league.cache_size)
         self._fixed_spawns = False
         self._prev_agents: dict = {}
         self._stats: dict = {}
@@ -111,10 +122,27 @@ class CTFTrainEnv:
             return Team.BLUE
         return self._rng.choice([Team.RED, Team.BLUE])
 
-    def _choose_opponent(self, phase: PhaseConfig, env_config: CTFConfig) -> tuple[BaseStrategy, str]:
-        weights = [o.weight for o in phase.opponents]
-        spec = self._rng.choices(phase.opponents, weights=weights, k=1)[0]
-        return build_opponent(spec, env_config, Random(self._rng.randrange(2**31))), spec.label
+    def _choose_opponent(self, phase: PhaseConfig, env_config: CTFConfig) -> tuple[BaseStrategy, str, int | None]:
+        """Draw this episode's opponent by weight; returns (opponent, label, snapshot step or None).
+
+        League opponents are left out of the draw while the league is empty. If a league snapshot vanishes
+        between listing and loading (pruned), that entry is dropped for this draw and the rest re-drawn;
+        the config guarantees at least one non-league opponent per phase."""
+        pool = list(phase.opponents)
+        while True:
+            if self._league is not None and not self._league.snapshots():
+                pool = [o for o in pool if not is_league_spec(o)]
+            spec = self._rng.choices(pool, weights=[o.weight for o in pool], k=1)[0]
+            rng = Random(self._rng.randrange(2**31))
+            if not is_league_spec(spec):
+                return build_opponent(spec, env_config, rng), spec.label, None
+            try:
+                opponent, step = build_checkpoint_opponent(spec.params, env_config, rng, self._league)
+            except ConfigError:
+                if not self._league.snapshots():  # emptied under us: fall back to the other opponents
+                    continue
+                raise
+            return opponent, spec.label, step
 
     def reset(self) -> EnvStep:
         if self._runtime is None or self.cfg.curriculum.phases[self._pending_phase] is not self._runtime.phase:
@@ -125,7 +153,9 @@ class CTFTrainEnv:
         self._fixed_spawns = self._rng.random() < phase.fixed_spawn_fraction
         self._env = rt.envs[self._fixed_spawns]
         self._team = self._choose_team()
-        self._opponent, self._opponent_label = self._choose_opponent(phase, rt.env_config)
+        self._opponent, self._opponent_label, self._opponent_snapshot_step = self._choose_opponent(
+            phase, rt.env_config
+        )
         self._opponent.reset()
 
         self._env.reset()
@@ -201,6 +231,7 @@ class CTFTrainEnv:
             "length": self._stats["length"],
             "learner_team": self._team.value,
             "opponent": self._opponent_label,
+            "snapshot_step": self._opponent_snapshot_step,  # None unless a league snapshot was played
             "phase": self._runtime.phase.name,  # type: ignore[union-attr]
             "fixed_spawns": self._fixed_spawns,
             "pickups": self._stats["pickups"],

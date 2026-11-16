@@ -210,3 +210,8 @@ noise_free_eval:
   at_end: true                     # also once after the last update
   config_path: configs/rl/eval_train.yaml   # small strict eval YAML (20 episodes per opponent, no minimax)
   overrides: {}                    # e.g. {episodes: 40} on top of that file
+
+league:
+  snapshot_every_steps: 0
+  keep_snapshots: 0
+  cache_size: 4

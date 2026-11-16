@@ -11,3 +11,5 @@ Installed 1 package in 3ms
   vs scripted_leash     as blue 95/100 wins
   vs scripted_parked    as red  87/100 wins
   vs scripted_parked    as blue 82/100 wins
+  vs scripted_chaser    as red  97/100 wins
+  vs scripted_chaser    as blue 97/100 wins

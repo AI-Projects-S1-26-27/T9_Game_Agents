@@ -26,10 +26,48 @@ def agent_index(agent_id: str) -> int:
     return int(digits) if digits else 0
 
 
-def assign_roles(agent_ids: list[str]) -> dict[str, str]:
-    """R1 = attacker, R2 = defender, R3 = scout (then repeats if more agents)."""
+@dataclass(frozen=True)
+class Rules:
+    """The flag rules that matter for ordering players (read from the environment config)."""
+
+    carrier_slots: tuple[int, ...] | None = None    # 1-based slots that may carry the flag; None = everyone
+    tagging_rule: str = "any_enemy"                  # "any_enemy" or "headcount"
+    drop_flag_on_tag: bool = False
+    dropped_flag_enemy_pickup: bool = True
+    dropped_flag_return_on_touch: bool = True
+
+
+def rules_from_config(config) -> Rules:
+    """Rules of an environment config (the original rules when no config is given)."""
+    if config is None:
+        return Rules()
+    slots = getattr(config, "carrier_slots", None)
+    rule = getattr(config, "tagging_rule", "any_enemy")
+    return Rules(
+        carrier_slots=tuple(slots) if slots else None,
+        tagging_rule=str(getattr(rule, "value", rule)),
+        drop_flag_on_tag=bool(getattr(config, "drop_flag_on_tag", False)),
+        dropped_flag_enemy_pickup=bool(getattr(config, "dropped_flag_enemy_pickup", True)),
+        dropped_flag_return_on_touch=bool(getattr(config, "dropped_flag_return_on_touch", True)),
+    )
+
+
+def assign_roles(agent_ids: list[str], rules: Rules | None = None) -> dict[str, str]:
+    """Original rules: R1 attacker, R2 defender, R3 scout (repeating for more agents).
+    With carrier slots: the carrier slots are attackers, then one defender, the rest scouts
+    (4 agents, carriers 1 and 2: attacker, attacker, defender, scout)."""
     ordered = sorted(agent_ids, key=agent_index)
-    return {aid: ROLE_CYCLE[i % len(ROLE_CYCLE)] for i, aid in enumerate(ordered)}
+    if rules is None or rules.carrier_slots is None:
+        return {aid: ROLE_CYCLE[i % len(ROLE_CYCLE)] for i, aid in enumerate(ordered)}
+    roles, defenders = {}, 0
+    for i, aid in enumerate(ordered, start=1):
+        if i in rules.carrier_slots:
+            roles[aid] = "attacker"
+        elif defenders == 0:
+            roles[aid], defenders = "defender", 1
+        else:
+            roles[aid] = "scout"
+    return roles
 
 
 @dataclass
@@ -46,6 +84,7 @@ class FlagView:
     pos: Cell
     carried: bool
     carrier_id: str | None
+    dropped: bool = False       # lying on the cell where its carrier was tagged (not at its base)
 
 
 @dataclass
@@ -75,6 +114,7 @@ class View:
     enemies: list[tuple[str, Cell, int]]  # (id, last seen position, turn last seen)
     order_status: list[OrderStatus] = field(default_factory=list)
     events: list[str] = field(default_factory=list)
+    rules: Rules = field(default_factory=Rules)
 
     def agent(self, agent_id: str) -> AgentView | None:
         return next((a for a in self.agents if a.id == agent_id), None)
@@ -93,15 +133,18 @@ def zone_table(view: View) -> dict[str, Cell]:
     return {k: nearest_free(w, h, ob, v) for k, v in raw.items()}
 
 
-DYNAMIC_TARGETS = ("enemy_carrier",)  # resolved fresh every turn
+DYNAMIC_TARGETS = ("enemy_carrier", "own_carrier")  # resolved fresh every turn
 
 
 def resolve_target(view: View, target) -> Cell | None:
-    """Named zone / [x, y] -> cell. 'enemy_carrier' -> where our stolen flag is (if stolen)."""
+    """Named zone / [x, y] -> cell. 'enemy_carrier' -> where our stolen flag is (if stolen);
+    'own_carrier' -> where our flag carrier is (if one of us carries the enemy flag)."""
     if isinstance(target, str):
         name = target.strip().lower()
         if name == "enemy_carrier":
             return view.own_flag.pos if view.own_flag.carried else None
+        if name == "own_carrier":       # our player carrying the enemy flag (to escort it)
+            return view.enemy_flag.pos if view.enemy_flag is not None and view.enemy_flag.carried else None
         if name == "enemy_flag":
             return view.enemy_flag.pos if view.enemy_flag else view.enemy_base
         if name == "own_flag":

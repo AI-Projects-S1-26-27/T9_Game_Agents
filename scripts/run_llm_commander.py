@@ -4,6 +4,9 @@
 Examples:
   uv run python scripts/run_llm_commander.py                            # offline mock LLM vs 'balanced'
   uv run --with google-genai python scripts/run_llm_commander.py --llm gemini --opponent classical
+  uv run python scripts/run_llm_commander.py --llm openai --model MODEL_NAME --opponent classical
+  uv run python scripts/run_llm_commander.py --llm custom --base-url http://localhost:8000/v1 --model MODEL_NAME
+  uv run python scripts/run_llm_commander.py --llm auto            # provider chosen by scripts/setup_llm.py
   uv run python scripts/run_llm_commander.py --condition classical      # Team 1's classical AI, no LLM
   uv run python scripts/run_llm_commander.py --condition llm_classical  # LLM orders on Team 1's agents
   uv run python scripts/run_llm_commander.py --condition llm_rl --rl-checkpoint untrained   # LLM + RL agent
@@ -22,6 +25,7 @@ from ctf.agent import Team  # noqa: E402
 from ctf.config import load_config  # noqa: E402
 from strategies.llm_commander.conditions import ALL_CONDITIONS, build_condition, needs_rl, parse_condition, uses_llm  # noqa: E402
 from strategies.llm_commander.llm import make_llm  # noqa: E402
+from strategies.llm_commander.providers import add_provider_arguments, provider_options  # noqa: E402
 from strategies.llm_commander.opponents import ALL_OPPONENTS, make_opponent  # noqa: E402
 from strategies.llm_commander.rl_adapter import resolve_checkpoint  # noqa: E402
 from strategies.llm_commander.runner import play_game, with_spawn_mode  # noqa: E402
@@ -30,9 +34,9 @@ from strategies.llm_commander.runner import play_game, with_spawn_mode  # noqa: 
 def main() -> None:
     p = argparse.ArgumentParser(description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter)
     p.add_argument("--condition", default="llm", help=f"one of: {', '.join(ALL_CONDITIONS)} (add @K to set the trigger period)")
-    p.add_argument("--llm", choices=["mock", "gemini"], default="mock")
-    p.add_argument("--model", default=None, help="Gemini model name (default: GEMINI_MODEL or built-in)")
-    p.add_argument("--rpm", type=float, default=10.0, help="max Gemini requests per minute")
+    p.add_argument("--llm", default="mock", help='mock (offline), auto, or a provider: gemini, openai, anthropic, openrouter, groq, together, mistral, deepseek, ollama, lmstudio, custom')
+    p.add_argument("--model", default=None, help="model name (default: LLM_MODEL, the settings file, or the provider default)")
+    p.add_argument("--rpm", type=float, default=10.0, help="max LLM requests per minute")
     p.add_argument("--team", choices=["red", "blue"], default="red", help="team the commander controls")
     p.add_argument("--opponent", choices=ALL_OPPONENTS, default="balanced")
     p.add_argument("--partial", action="store_true", help="partial observability (fog of war)")
@@ -48,6 +52,7 @@ def main() -> None:
     p.add_argument("--log", default="logs/llm_commander.jsonl", help="prompt/response log (one file per game)")
     p.add_argument("--cache", default=None, help="file to cache LLM answers (saves quota, repeatable)")
     p.add_argument("--quiet", action="store_true")
+    add_provider_arguments(p)
     args = p.parse_args()
 
     parse_condition(args.condition)
@@ -58,7 +63,7 @@ def main() -> None:
             sys.exit(str(e))
     config = with_spawn_mode(load_config(ROOT / args.config), args.spawn)
     try:
-        llm = make_llm(args.llm, args.model, args.rpm, args.cache) if uses_llm(args.condition) else None
+        llm = make_llm(args.llm, args.model, args.rpm, args.cache, **provider_options(args)) if uses_llm(args.condition) else None
     except RuntimeError as e:
         sys.exit(str(e))
     my_team = Team[args.team.upper()]
@@ -70,7 +75,7 @@ def main() -> None:
             log = str(Path(args.log).with_name(f"{Path(args.log).stem}_game{g}.jsonl"))
             Path(log).unlink(missing_ok=True)
         mine = build_condition(args.condition, llm=llm, max_steps=config.max_episode_steps, seed=seed,
-                               default_k=args.k, log_path=log, rl_checkpoint=args.rl_checkpoint)
+                               default_k=args.k, log_path=log, rl_checkpoint=args.rl_checkpoint, config=config)
         theirs = make_opponent(args.opponent, config, seed, args.rl_checkpoint)
         res = play_game(config, mine, theirs, my_team, seed, partial=args.partial, radius=args.radius)
         wins += res.result == "win"

@@ -8,7 +8,7 @@ from ctf.observations import ObservationMode, TeamObservation
 from strategies.base import BaseStrategy
 
 from .commander import Commander
-from .commands import assign_roles
+from .commands import assign_roles, rules_from_config
 from .controller import Controller
 from .view import build_view
 
@@ -23,6 +23,7 @@ class LLMCommanderStrategy(BaseStrategy):
                        "rl" (Team 2's trained policy plays every agent that has no order; needs a checkpoint)
                        or a ready-made Controller object
     use_validator:     False = ablation, orders are executed without legality checks
+    env_config:        the game's CTFConfig, so the prompt and roles follow its flag rules (original rules if omitted)
     include_map:       False = ablation, the prompt has no ASCII map
     share_scout_info:  False = ablation (partial observability only), the scout's observations are
                        not merged into what the commander knows
@@ -32,7 +33,7 @@ class LLMCommanderStrategy(BaseStrategy):
                  log_path: str | None = None, max_steps: int | None = None,
                  controller: str = "simple", use_validator: bool = True,
                  include_map: bool = True, share_scout_info: bool = True,
-                 rl_checkpoint: str | None = None) -> None:
+                 rl_checkpoint: str | None = None, env_config=None) -> None:
         if isinstance(controller, str) and controller not in ("simple", "classical", "rl"):
             raise ValueError("controller must be 'simple', 'classical', 'rl' or a Controller object")
         self.commander = Commander(llm, every_k_turns, max_retries, log_path,
@@ -47,17 +48,13 @@ class LLMCommanderStrategy(BaseStrategy):
         elif controller == "rl":
             from .rl_adapter import RLControllerAdapter
 
-            self.controller = RLControllerAdapter(rl_checkpoint)
+            self.controller = RLControllerAdapter(rl_checkpoint, env_config=env_config)
         else:
             self.controller = Controller()
         self.max_steps = max_steps
         self.share_scout_info = share_scout_info
+        self.rules = rules_from_config(env_config)       # flag rules of the game (original rules if no config)
         self.reset()
-
-    @property
-    def needs_partial_observation(self) -> bool:
-        """The RL policy was trained with fog of war, so it must be given partial observations."""
-        return bool(getattr(self.controller, "needs_partial_observation", False))
 
     # ---- per-game memory ---------------------------------------------------
     def reset(self) -> None:
@@ -116,10 +113,12 @@ class LLMCommanderStrategy(BaseStrategy):
             self.reset()
         self.last_t = observation.timestep
         if not self.roles:
-            self.roles = assign_roles([a.agent_id for a in observation.agents.values() if a.team is team])
+            ids = [a.agent_id for a in observation.agents.values() if a.team is team]
+            own_roles = getattr(self.controller, "roles_for", None)        # e.g. the RL policy's own slot roles
+            self.roles = (own_roles(ids) if own_roles else None) or assign_roles(ids, self.rules)
 
         observed, observers = self._team_knowledge(observation, team)
-        view = build_view(observation, team, self.roles, self.enemy_memory, observed, self.max_steps, observers)
+        view = build_view(observation, team, self.roles, self.enemy_memory, observed, self.max_steps, observers, self.rules)
         view.events = self._events(self.prev_view, view)
 
         self.controller.attach(observation, team, self.roles)

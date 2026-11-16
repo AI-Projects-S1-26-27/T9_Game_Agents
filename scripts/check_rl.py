@@ -28,16 +28,17 @@ def main() -> None:
     p.add_argument("--rl-checkpoint", default=None)
     p.add_argument("--opponent", default="classical")
     p.add_argument("--seed", type=int, default=1)
+    p.add_argument("--config", default="configs/ctf_v2.yaml", help="environment config (the RL agent is trained for v2)")
     args = p.parse_args()
     try:
         ckpt = resolve_checkpoint(args.rl_checkpoint)
     except RuntimeError as e:
         sys.exit(str(e))
-    config = load_config(ROOT / "configs/default.yaml")
+    config = load_config(ROOT / args.config)
     print(f"RL checkpoint: {ckpt}\n")
     for cond in ("rl", "llm_rl"):
         for side in (Team.RED, Team.BLUE):
-            mine = build_condition(cond, llm=MockLLM(), max_steps=config.max_episode_steps, seed=args.seed, rl_checkpoint=ckpt)
+            mine = build_condition(cond, llm=MockLLM(), max_steps=config.max_episode_steps, seed=args.seed, rl_checkpoint=ckpt, config=config)
             theirs = make_opponent(args.opponent, config, args.seed, ckpt)
             res = play_game(config, mine, theirs, side, args.seed)
             m = res.metrics

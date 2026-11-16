@@ -4,7 +4,7 @@ LLM conditions (need an LLM backend):
   llm                 LLM orders + simple controller (the main condition)
   llm_classical       LLM orders executed by Team 1's A* / role logic (mixed team)
   llm_rl              LLM orders for the agents it picks, Team 2's trained RL policy plays the rest (mixed team;
-                      partial observations, because the policy was trained with fog of war)
+                      needs the RL agent's rules: --config configs/ctf_v2.yaml)
   llm_no_validator    ablation: orders are executed without the safety check
   llm_no_map          ablation: the prompt contains no ASCII map
   llm_no_scout_share  ablation: scout observations are not shared (partial observability only)
@@ -45,7 +45,7 @@ def needs_rl(spec: str) -> bool:
 
 
 def build_condition(spec: str, *, llm, max_steps: int, seed: int = 0, default_k: int = 5,
-                    log_path: str | None = None, rl_checkpoint: str | None = None) -> BaseStrategy:
+                    log_path: str | None = None, rl_checkpoint: str | None = None, config=None) -> BaseStrategy:
     name, k = parse_condition(spec)
     k = k or default_k
     if name == "classical":
@@ -53,9 +53,9 @@ def build_condition(spec: str, *, llm, max_steps: int, seed: int = 0, default_k:
 
         return ClassicalStrategy()
     if name == "rl":
-        from .rl_adapter import RLPolicyStrategy
+        from .rl_adapter import make_rl_strategy
 
-        return RLPolicyStrategy(rl_checkpoint)
+        return make_rl_strategy(rl_checkpoint, config)
     if name == "scripted":
         from .baseline import ScriptedStrategy
 
@@ -65,4 +65,5 @@ def build_condition(spec: str, *, llm, max_steps: int, seed: int = 0, default_k:
                "llm_no_validator": {"use_validator": False}, "llm_no_map": {"include_map": False},
                "llm_no_scout_share": {"share_scout_info": False}, "random_commander": {}}[name]
     backend = RandomOrdersLLM(seed=seed) if name == "random_commander" else llm
-    return LLMCommanderStrategy(backend, every_k_turns=k, log_path=log_path, max_steps=max_steps, **options)
+    return LLMCommanderStrategy(backend, every_k_turns=k, log_path=log_path, max_steps=max_steps,
+                                env_config=config, **options)

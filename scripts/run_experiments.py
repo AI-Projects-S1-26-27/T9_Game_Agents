@@ -28,6 +28,7 @@ from ctf.agent import Team  # noqa: E402
 from ctf.config import load_config  # noqa: E402
 from strategies.llm_commander.conditions import build_condition, needs_rl, parse_condition, uses_llm  # noqa: E402
 from strategies.llm_commander.llm import make_llm  # noqa: E402
+from strategies.llm_commander.providers import add_provider_arguments, provider_options  # noqa: E402
 from strategies.llm_commander.opponents import ALL_OPPONENTS, make_opponent  # noqa: E402
 from strategies.llm_commander.reporting import read_rows, summarise  # noqa: E402
 from strategies.llm_commander.rl_adapter import resolve_checkpoint  # noqa: E402
@@ -54,9 +55,9 @@ def main() -> None:
                    help="RL policy file from rl.train (default: $RL_CHECKPOINT or runs/mappo_default/checkpoints/latest.pt); "
                         "'untrained' = random weights, only to test the plumbing")
     p.add_argument("--k", type=int, default=5, help="default trigger period (ask the LLM at least every K turns)")
-    p.add_argument("--llm", choices=["mock", "gemini"], default="mock")
-    p.add_argument("--model", default=None, help="Gemini model name (default: GEMINI_MODEL or built-in)")
-    p.add_argument("--rpm", type=float, default=10.0, help="max Gemini requests per minute (free tiers are low)")
+    p.add_argument("--llm", default="mock", help='mock (offline), auto, or a provider: gemini, openai, anthropic, openrouter, groq, together, mistral, deepseek, ollama, lmstudio, custom')
+    p.add_argument("--model", default=None, help="model name (default: LLM_MODEL, the settings file, or the provider default)")
+    p.add_argument("--rpm", type=float, default=10.0, help="max LLM requests per minute (free tiers are low)")
     p.add_argument("--cache", default=None, help="LLM answer cache file (saves quota, repeatable)")
     p.add_argument("--config", default="configs/default.yaml")
     p.add_argument("--out", default="results/games.csv")
@@ -64,6 +65,7 @@ def main() -> None:
     p.add_argument("--log-dir", default="logs/experiments", help="per-game prompt/response logs (LLM conditions)")
     p.add_argument("--max-llm-calls", type=int, default=None, help="abort if the estimated calls exceed this")
     p.add_argument("--dry-run", action="store_true", help="print the plan and the estimated LLM calls only")
+    add_provider_arguments(p)
     args = p.parse_args()
 
     conditions = [c.strip() for c in args.conditions.split(",") if c.strip()]
@@ -109,7 +111,7 @@ def main() -> None:
     new_file = not out.exists()
     config = with_spawn_mode(load_config(ROOT / args.config), args.spawn)
     try:
-        llm = make_llm(args.llm, args.model, args.rpm, args.cache) if any(uses_llm(c) for c in conditions) else None
+        llm = make_llm(args.llm, args.model, args.rpm, args.cache, **provider_options(args)) if any(uses_llm(c) for c in conditions) else None
     except RuntimeError as e:
         sys.exit(str(e))
     model_name = llm.name if llm else ""
@@ -133,7 +135,7 @@ def main() -> None:
                     if log and Path(log).exists():
                         Path(log).unlink()
                     mine = build_condition(cond, llm=llm, max_steps=config.max_episode_steps, seed=seed,
-                                           default_k=args.k, log_path=log, rl_checkpoint=args.rl_checkpoint)
+                                           default_k=args.k, log_path=log, rl_checkpoint=args.rl_checkpoint, config=config)
                     theirs = make_opponent(opp, config, seed, args.rl_checkpoint)
                     try:
                         g = play_game(config, mine, theirs, my_team, seed, partial=(mode == "partial"), radius=args.radius)

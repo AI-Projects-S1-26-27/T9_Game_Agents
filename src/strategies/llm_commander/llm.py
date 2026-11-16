@@ -1,4 +1,5 @@
-"""LLM backends: MockLLM (offline stand-in), GeminiLLM (Gemini API), RandomOrdersLLM (control), CachedLLM (cache)."""
+"""LLM backends: MockLLM (offline stand-in), GeminiLLM (Gemini SDK), RandomOrdersLLM (control), CachedLLM (cache).
+Any other service goes through providers.HTTPLLM; make_llm() chooses."""
 from __future__ import annotations
 
 import hashlib
@@ -51,7 +52,8 @@ class GeminiLLM:
 
     def __init__(self, model: str | None = None, temperature: float | None = 0.0,
                  max_output_tokens: int = 4096, rpm: float | None = 10.0, max_retries: int = 5,
-                 thinking_level: str | None = None, client=None, sleep=time.sleep, clock=time.monotonic):
+                 thinking_level: str | None = None, api_key: str | None = None, client=None,
+                 sleep=time.sleep, clock=time.monotonic):
         self.name = model or os.environ.get("GEMINI_MODEL") or DEFAULT_GEMINI_MODEL
         self.temperature, self.max_output_tokens = temperature, max_output_tokens
         # Optional reasoning effort ("low", "medium", "high") for models that support it; lower = faster.
@@ -61,7 +63,7 @@ class GeminiLLM:
         self._last_call = None
         self.last_usage = None
         if client is None:
-            key = os.environ.get("GEMINI_API_KEY") or os.environ.get("GOOGLE_API_KEY")
+            key = api_key or os.environ.get("GEMINI_API_KEY") or os.environ.get("GOOGLE_API_KEY")
             if not key:
                 raise RuntimeError("GEMINI_API_KEY is not set. Create a key in Google AI Studio and export it.")
             from google import genai          # pip install google-genai
@@ -168,7 +170,7 @@ class CachedLLM:
         self.cache = json.loads(self.path.read_text()) if self.path.exists() else {}
 
     def complete(self, system: str, user: str) -> str:
-        key = hashlib.sha256(f"{self.llm.name}\n{system}\n{user}".encode()).hexdigest()
+        key = hashlib.sha256(f"{getattr(self.llm, 'provider', '')}\n{self.llm.name}\n{system}\n{user}".encode()).hexdigest()
         if key in self.cache:
             self.hits += 1
             self.last_usage = {"in": 0, "out": 0, "cached": True}
@@ -182,12 +184,15 @@ class CachedLLM:
 
 
 
-def make_llm(kind: str = "mock", model: str | None = None, rpm: float | None = 10.0, cache: str | None = None):
-    """Build the LLM backend from command-line style options ('mock' or 'gemini')."""
+def make_llm(kind: str = "mock", model: str | None = None, rpm: float | None = 10.0, cache: str | None = None,
+             **options):
+    """Build the LLM backend: 'mock' (offline), a provider name (openai, anthropic, gemini, groq, ollama, custom, ...)
+    or 'auto' (from LLM_PROVIDER, the settings file, or whichever API key is set). `options` are passed to
+    providers.build_llm (base_url, api_key, api_key_env, api_format, extra, json_mode)."""
     if kind == "mock":
         llm = MockLLM()
-    elif kind == "gemini":
-        llm = GeminiLLM(model=model, rpm=rpm)
     else:
-        raise ValueError("llm must be 'mock' or 'gemini'")
+        from .providers import build_llm
+
+        llm = build_llm(kind, model=model, rpm=rpm, **options)
     return CachedLLM(llm, cache) if cache else llm

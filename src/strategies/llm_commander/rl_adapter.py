@@ -1,26 +1,20 @@
 """Integration with Team 2's reinforcement-learning agent (branch rl_agent).
 
-RLPolicyStrategy   runs a trained RL policy as a normal BaseStrategy (opponent, or Approach 2 baseline).
-RLControllerAdapter mixed team: agents with an LLM order follow it (shortest path); all other agents
-                    are played by the RL policy. The policy has no input for orders, so the LLM can only
-                    take over individual agents, not steer the policy's own decisions.
+make_rl_strategy     loads a trained checkpoint as the RL team's own RLStrategy (rl/rl_strategy.py).
+RLControllerAdapter  mixed team: agents with an LLM order follow it (shortest path); all other agents
+                     are played by the RL policy. The policy has no input for orders, so the LLM can only
+                     take over individual agents, not steer the policy's own decisions.
 
-The policy was trained under fog of war, so it always needs a PartialTeamObservation. Strategies that
-need one set `needs_partial_observation = True`; runner.play_game then supplies it, also in games
-that are otherwise played with global observability.
-
-Requires the rl_agent branch, NumPy and PyTorch (uv sync --extra dev --extra rl)."""
-
+The RL agent is trained on the v2 rules with 4 agents per team (configs/ctf_v2.yaml), so games that
+include it need `--config configs/ctf_v2.yaml`. Requires the rl_agent branch and PyTorch
+(uv sync --extra dev --extra rl).
+"""
 from __future__ import annotations
 
+import os
 from pathlib import Path
 
-import numpy as np
-
 from ctf.actions import Action
-from ctf.agent import Team
-from ctf.observations import ObservationMode, TeamObservation
-from strategies.base import BaseStrategy
 
 from .controller import Controller
 
@@ -32,8 +26,6 @@ UNTRAINED = "untrained"        # random weights: only for testing the plumbing, 
 def resolve_checkpoint(path: str | None) -> str:
     """Checkpoint path from the argument, the RL_CHECKPOINT environment variable or the default location.
     Raises RuntimeError with instructions if the file does not exist ('untrained' is always accepted)."""
-    import os
-
     path = path or os.environ.get("RL_CHECKPOINT") or DEFAULT_CHECKPOINT
     if path == UNTRAINED:
         return path
@@ -48,99 +40,58 @@ def resolve_checkpoint(path: str | None) -> str:
     return str(p)
 
 
-def _torch_infer(model, device, deterministic: bool):
+def make_rl_strategy(checkpoint: str | None = None, env_config=None, *, deterministic: bool = True, seed: int = 0):
+    """The RL team's RLStrategy for a checkpoint file ('untrained' = random weights).
+    env_config: the game's CTFConfig, used to check that the checkpoint fits the game."""
     import torch
 
-    def infer(features) -> np.ndarray:
-        def tensor(a):
-            return torch.from_numpy(np.ascontiguousarray(a)).to(device)
+    from rl.checkpoint import CheckpointError
+    from rl.rl_strategy import RLStrategy
 
-        actions, _ = model.act(tensor(features.grid), tensor(features.vec), tensor(features.mask),
-                               tensor(features.role_index), deterministic=deterministic)
-        return actions.cpu().numpy()
-
-    return infer
-
-
-class RLPolicyStrategy(BaseStrategy):
-    needs_partial_observation = True
-
-    def __init__(self, checkpoint: str | None = None, *, deterministic: bool = True, device: str = "cpu",
-                 seed: int = 0, infer=None, env_config=None, rl_config=None) -> None:
-        """checkpoint: path to a .pt file written by rl.train, or "untrained".
-        infer / env_config / rl_config: supply all three to plug in a stand-in network (used by the tests)."""
-        if infer is None:
-            infer, env_config, rl_config = self._load(checkpoint or DEFAULT_CHECKPOINT, deterministic, device, seed)
-        self._infer, self.env_config, self.rl_config = infer, env_config, rl_config
-        self._builders: dict = {}
-        self._last_t: dict = {}
-
-    @staticmethod
-    def _load(checkpoint: str, deterministic: bool, device: str, seed: int):
-        import torch
-
+    checkpoint = resolve_checkpoint(checkpoint)
+    try:
         if checkpoint == UNTRAINED:
             from rl.config import load_base_env_config, load_rl_config
+            from rl.mappo import ValueNorm
             from rl.networks import ActorCritic, NetworkSpec
 
-            rl_config = load_rl_config(str(REPO_ROOT / "configs/rl/default.yaml"), {})
-            env_config = load_base_env_config(rl_config, root=REPO_ROOT)
+            cfg = load_rl_config(str(REPO_ROOT / "configs/rl/default.yaml"), {})
+            env = env_config or load_base_env_config(cfg, root=REPO_ROOT)
             torch.manual_seed(seed)
-            model = ActorCritic(NetworkSpec.from_env(env_config), rl_config.model).to(device).eval()
+            model = ActorCritic(NetworkSpec.from_env(env), cfg.model)
+            strategy = RLStrategy(model, cfg, env, ValueNorm(cfg.ppo.value_normalization),
+                                  deterministic=deterministic, seed=seed)
         else:
-            from rl.checkpoint import CheckpointError, load_policy
-
-            path = Path(checkpoint)
-            if not path.is_absolute() and not path.exists():
-                path = REPO_ROOT / path
-            try:
-                model, meta = load_policy(path, device)
-            except CheckpointError as e:
-                raise RuntimeError(
-                    f"{e}\nTrain the RL agent first (python -m rl.train --config configs/rl/default.yaml) or "
-                    f"pass the path of an existing checkpoint with --rl-checkpoint "
-                    f"(use 'untrained' only to test the plumbing).") from e
-            rl_config, env_config = meta["config"], meta["env_config"]
-        return _torch_infer(model, device, deterministic), env_config, rl_config
-
-    def reset(self) -> None:
-        self._builders.clear()
-        self._last_t.clear()
-
-    def act(self, observation: TeamObservation, team: Team) -> dict[str, Action]:
-        from rl.features import FeatureBuilder
-
-        if observation.mode is not ObservationMode.PARTIAL:
-            raise ValueError("The RL policy needs a partial team observation (it was trained with fog of war). "
-                             "Run it through strategies.llm_commander.runner.play_game, which provides one.")
-        builder = self._builders.get(team)
-        if builder is None or observation.timestep <= self._last_t.get(team, -1):     # first call or new game
-            builder = FeatureBuilder(self.env_config, team, list(self.rl_config.roles.slots), self.rl_config.features)
-            self._builders[team] = builder
-        self._last_t[team] = observation.timestep
-        if (observation.width, observation.height) != (builder.width, builder.height):
-            raise ValueError(f"Checkpoint was trained on a {builder.width}x{builder.height} map but the game "
-                             f"is {observation.width}x{observation.height}.")
-        features = builder.actor_features(observation)
-        chosen = self._infer(features)
-        return {aid: builder.canon.to_env_action(int(chosen[slot]))
-                for slot, aid in enumerate(builder.agent_ids) if features.alive[slot]}
+            strategy = RLStrategy.from_checkpoint(checkpoint, env_config, deterministic=deterministic, seed=seed)
+    except (CheckpointError, ValueError) as e:
+        raise RuntimeError(f"The RL checkpoint does not fit this game: {e}\n"
+                           f"The RL agent is trained for configs/ctf_v2.yaml: use --config configs/ctf_v2.yaml.") from e
+    if env_config is not None and len(strategy.roles) != env_config.agents_per_team:
+        raise RuntimeError(f"The RL checkpoint was trained for {len(strategy.roles)} agents per team but this game "
+                           f"has {env_config.agents_per_team}. Use --config configs/ctf_v2.yaml (the RL agent's rules).")
+    return strategy
 
 
 class RLControllerAdapter(Controller):
     """Mixed team: LLM orders for the agents that have one, the RL policy for everybody else."""
 
-    needs_partial_observation = True
-
-    def __init__(self, checkpoint: str | None = None, policy: RLPolicyStrategy | None = None) -> None:
+    def __init__(self, checkpoint: str | None = None, policy=None, env_config=None) -> None:
         super().__init__()
-        self.policy = policy or RLPolicyStrategy(checkpoint)
+        self.policy = policy or make_rl_strategy(checkpoint, env_config)
         self.observation = None
         self.team = None
 
     def reset(self) -> None:
         super().reset()
         self.policy.reset()
+
+    def roles_for(self, agent_ids: list[str]):
+        """Roles of the agents as the RL policy sees them (its slot order), so both agree on who is who."""
+        slots = getattr(self.policy, "roles", None)
+        ordered = sorted(agent_ids, key=lambda a: int("".join(c for c in a if c.isdigit()) or 0))
+        if not slots or len(slots) != len(ordered):
+            return None
+        return {aid: getattr(role, "value", str(role)) for aid, role in zip(ordered, slots)}
 
     def attach(self, observation, team, roles) -> None:
         self.observation, self.team = observation, team

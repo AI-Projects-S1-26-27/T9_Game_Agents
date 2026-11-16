@@ -5,15 +5,16 @@ from ctf.agent import Team
 from ctf.game_state import FlagStatus
 from ctf.observations import ObservationMode
 
-from .commands import AgentView, FlagView, View, zone_table
+from .commands import AgentView, FlagView, Rules, View, zone_table
 
 
 def _flag_view(flag) -> FlagView:
-    return FlagView((flag.x, flag.y), flag.status is FlagStatus.CARRIED, flag.carrier_id)
+    return FlagView((flag.x, flag.y), flag.status is FlagStatus.CARRIED, flag.carrier_id,
+                    flag.status is FlagStatus.DROPPED)
 
 
 def build_view(obs, team: Team, roles: dict[str, str], enemy_memory: dict, observed, max_steps,
-               observers: list | None = None) -> View:
+               observers: list | None = None, rules=None) -> View:
     """Uses ONLY the observation. enemy_memory persists last-seen enemy positions (for fog of war)."""
     own_base = obs.red_base if team is Team.RED else obs.blue_base
     enemy_base = obs.blue_base if team is Team.RED else obs.red_base
@@ -45,7 +46,7 @@ def build_view(obs, team: Team, roles: dict[str, str], enemy_memory: dict, obser
         observed=observed, own_base=tuple(own_base), enemy_base=tuple(enemy_base),
         own_flag=_flag_view(obs.flags[team]),
         enemy_flag=_flag_view(enemy_flag) if enemy_flag else None,
-        agents=agents, enemies=enemies,
+        agents=agents, enemies=enemies, rules=rules if rules is not None else Rules(),
     )
 
 
@@ -89,12 +90,22 @@ def view_to_text(view: View, include_map: bool = True) -> str:
         carry = "  CARRYING THE ENEMY FLAG" if a.carrying else ""
         out.append(f"- {a.id} ({a.role}) at {a.pos}{carry}{state}")
     f = view.own_flag
-    out.append(f"Our flag: {'STOLEN, carried by ' + str(f.carrier_id) + ' now at ' + str(f.pos) if f.carried else 'safe at our base ' + str(f.pos)}.")
+    if f.carried:
+        own_text = f"STOLEN, carried by {f.carrier_id} now at {f.pos}"
+    elif f.dropped:
+        own_text = (f"lying at {f.pos}, away from our base (dropped when its thief was tagged)"
+                    + ("; one of our agents touching it sends it back home" if view.rules.dropped_flag_return_on_touch else "")
+                    + ("; an enemy attacker can pick it up again" if view.rules.dropped_flag_enemy_pickup else ""))
+    else:
+        own_text = f"safe at our base {f.pos}"
+    out.append(f"Our flag: {own_text}.")
     ef = view.enemy_flag
     if ef is None:
         out.append(f"Enemy flag: not currently visible (it starts at the enemy base {view.enemy_base}).")
     elif ef.carried:
         out.append(f"Enemy flag: carried by our agent {ef.carrier_id} at {ef.pos}.")
+    elif ef.dropped:
+        out.append(f"Enemy flag: lying at {ef.pos} (dropped after our carrier was tagged); our attacker can pick it up again.")
     else:
         out.append(f"Enemy flag: at the enemy base {ef.pos}.")
     if view.enemies:
@@ -102,6 +113,8 @@ def view_to_text(view: View, include_map: bool = True) -> str:
             f"{i} at {p}" + ("" if t == view.timestep else f" (seen turn {t})") for i, p, t in view.enemies))
     else:
         out.append("Enemies: none visible.")
+    if f.dropped:
+        out.append(f"NOTE: our flag lies at {f.pos}, outside our base.")
     if f.carried:
         out.append(f"ALERT: our flag is stolen! Carrier at {f.pos}. It must be tagged before it reaches the enemy base {view.enemy_base}.")
     if view.order_status:
@@ -110,5 +123,5 @@ def view_to_text(view: View, include_map: bool = True) -> str:
     if view.events:
         out.append("Events since your last look: " + ", ".join(view.events))
     out.append("Named zones: " + ", ".join(f"{k}={v}" for k, v in zone_table(view).items())
-               + ", enemy_flag, own_flag, enemy_carrier (only when our flag is stolen)")
+               + ", enemy_flag, own_flag, enemy_carrier (only when our flag is stolen), own_carrier (only while we carry the enemy flag)")
     return "\n".join(out)

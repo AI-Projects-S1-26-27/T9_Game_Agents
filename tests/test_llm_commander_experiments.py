@@ -305,81 +305,62 @@ def test_report_script_runs(tmp_path):
     assert (tmp_path / "rep" / "tables.md").exists() and (tmp_path / "rep" / "demo_candidates.md").exists()
 
 
-# ---------------------------------------------------------------- RL agent integration (stand-in network, no PyTorch needed)
-def _rl_parts():
-    pytest.importorskip("numpy")
-    pytest.importorskip("rl.features")
-    import numpy as np
-    from rl.config import load_base_env_config, load_rl_config
+# ---------------------------------------------------------------- RL agent integration (stand-in policy, no PyTorch needed)
+class FakeRLPolicy:
+    """Stands in for the RL team's RLStrategy: same act()/reset()/roles interface."""
 
-    rl_cfg = load_rl_config(str(ROOT / "configs/rl/default.yaml"), {})
-    env_cfg = load_base_env_config(rl_cfg, root=ROOT)
-    return np, rl_cfg, env_cfg
+    def __init__(self, action=Action.UP, roles=("attacker", "attacker", "defender", "scout")):
+        self.action, self.roles = action, list(roles)
 
+    def reset(self):
+        pass
 
-def _fake_infer(np, fixed=None, seed=0):
-    rng = np.random.default_rng(seed)
-
-    def infer(features):
-        return np.array([fixed if fixed is not None else int(rng.choice(np.flatnonzero(features.mask[s])))
-                         for s in range(len(features.alive))])
-    return infer
+    def act(self, observation, team):
+        return {a.agent_id: self.action for a in observation.agents.values() if a.team is team and a.active}
 
 
-def _rl_policy(fixed=None):
-    from strategies.llm_commander.rl_adapter import RLPolicyStrategy
-
-    np, rl_cfg, env_cfg = _rl_parts()
-    return RLPolicyStrategy(infer=_fake_infer(np, fixed), env_config=env_cfg, rl_config=rl_cfg)
-
-
-def test_rl_policy_returns_actions_for_active_agents_and_mirrors_blue():
-    from rl.canonical import ACTION_INDEX
-
-    policy = _rl_policy(fixed=ACTION_INDEX[Action.LEFT])
-    env = make_env()
-    red = policy.act(env.observe(ObservationMode.PARTIAL, team=Team.RED), Team.RED)
-    blue = policy.act(env.observe(ObservationMode.PARTIAL, team=Team.BLUE), Team.BLUE)
-    assert set(red) == {"R1", "R2", "R3"} and set(blue) == {"B1", "B2", "B3"}
-    assert set(red.values()) == {Action.LEFT}
-    assert set(blue.values()) == {Action.RIGHT}          # BLUE sees the board mirrored
-
-
-def test_rl_policy_skips_tagged_agents_and_rejects_global_observations():
-    policy = _rl_policy()
-    env = make_env()
-    env._state.agents["R2"] = dataclasses.replace(env._state.agents["R2"], active=False)
-    assert set(policy.act(env.observe(ObservationMode.PARTIAL, team=Team.RED), Team.RED)) == {"R1", "R3"}
-    with pytest.raises(ValueError, match="partial"):
-        policy.act(env.observe(ObservationMode.GLOBAL), Team.RED)
+def make_v2_env():
+    cfg = load_config(ROOT / "configs/ctf_v2.yaml")
+    env = CTFEnvironment(cfg)
+    env.reset(seed=1)
+    return cfg, env
 
 
 def test_mixed_rl_team_obeys_orders_and_lets_the_policy_play_the_rest():
-    from rl.canonical import ACTION_INDEX
     from strategies.llm_commander.rl_adapter import RLControllerAdapter
 
+    cfg, env = make_v2_env()
     order = json.dumps({"orders": [{"agent_id": "R1", "command": "go_to", "target": [1, 6]}]})   # straight down
-    adapter = RLControllerAdapter(policy=_rl_policy(fixed=ACTION_INDEX[Action.UP]))
-    strat = LLMCommanderStrategy(ScriptedLLM(order, '{"orders": []}'), controller=adapter, every_k_turns=100)
-    assert strat.needs_partial_observation
-    env = make_env()
-    actions = strat.act(env.observe(ObservationMode.PARTIAL, team=Team.RED), Team.RED)
-    assert actions["R1"] is Action.DOWN                                   # LLM order, walked
-    assert actions["R2"] is Action.UP and actions["R3"] is Action.UP      # RL policy
+    adapter = RLControllerAdapter(policy=FakeRLPolicy(Action.LEFT))
+    strat = LLMCommanderStrategy(ScriptedLLM(order, '{"orders": []}'), controller=adapter, every_k_turns=100,
+                                 env_config=cfg)
+    actions = strat.act(env.observe(), Team.RED)
+    assert actions["R1"] is Action.DOWN                                           # LLM order, walked
+    assert {actions["R2"], actions["R3"], actions["R4"]} == {Action.LEFT}         # RL policy
+    assert strat.roles == {"R1": "attacker", "R2": "attacker", "R3": "defender", "R4": "scout"}   # the policy's roles
 
 
-def test_runner_gives_rl_strategies_partial_observations_in_global_games():
+def test_mixed_rl_team_plays_full_games_on_both_sides():
     pytest.importorskip("classical_ai.evaluation")
-    from classical_ai.classical_strategy import ClassicalStrategy
+    from strategies.llm_commander.opponents import make_opponent
     from strategies.llm_commander.rl_adapter import RLControllerAdapter
     from strategies.llm_commander.runner import play_game
 
-    cfg = load_config(ROOT / "configs/default.yaml")
-    for mine in (_rl_policy(), LLMCommanderStrategy(MockLLM(), controller=RLControllerAdapter(policy=_rl_policy()),
-                                                    max_steps=cfg.max_episode_steps)):
-        for team in (Team.RED, Team.BLUE):
-            res = play_game(cfg, mine, ClassicalStrategy(), team, seed=2)          # global observability
-            assert res.result in ("win", "loss", "draw") and res.turns > 0
+    cfg, _ = make_v2_env()
+    for team in (Team.RED, Team.BLUE):
+        mine = LLMCommanderStrategy(MockLLM(), controller=RLControllerAdapter(policy=FakeRLPolicy(Action.STAY)),
+                                    env_config=cfg, max_steps=cfg.max_episode_steps)
+        res = play_game(cfg, mine, make_opponent("balanced", cfg, 1), team, seed=2)
+        assert res.result in ("win", "loss", "draw") and res.turns > 0
+
+
+def test_rl_checkpoint_must_match_the_game(tmp_path):
+    pytest.importorskip("torch")
+    from strategies.llm_commander.rl_adapter import make_rl_strategy
+
+    v1 = load_config(ROOT / "configs/default.yaml")                  # 3 agents: the RL agent expects 4
+    with pytest.raises(RuntimeError, match="ctf_v2"):
+        make_rl_strategy("untrained", v1)
 
 
 def test_checkpoint_resolution_messages(tmp_path):
@@ -401,9 +382,9 @@ def test_scripts_explain_a_missing_rl_checkpoint():
 
 def test_untrained_policy_runs_when_torch_is_installed():
     pytest.importorskip("torch")
-    pytest.importorskip("numpy")
-    from strategies.llm_commander.rl_adapter import RLPolicyStrategy
+    from strategies.llm_commander.rl_adapter import make_rl_strategy
 
-    policy = RLPolicyStrategy("untrained")
-    actions = policy.act(make_env().observe(ObservationMode.PARTIAL, team=Team.RED), Team.RED)
-    assert set(actions) == {"R1", "R2", "R3"} and all(isinstance(a, Action) for a in actions.values())
+    cfg, env = make_v2_env()
+    policy = make_rl_strategy("untrained", cfg)
+    actions = policy.act(env.observe(), Team.RED)
+    assert set(actions) == {"R1", "R2", "R3", "R4"} and all(isinstance(a, Action) for a in actions.values())

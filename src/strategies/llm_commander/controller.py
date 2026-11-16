@@ -9,7 +9,7 @@ from __future__ import annotations
 
 from ctf.actions import Action
 
-from .commands import DEFAULT_ORDER_LIFETIME, ROLE_DEFAULT, OrderStatus, View, resolve_target
+from .commands import DEFAULT_ORDER_LIFETIME, DYNAMIC_TARGETS, ROLE_DEFAULT, OrderStatus, View, resolve_target
 from .pathing import bfs_next_action
 
 FINISHED = ("done", "failed", "blocked", "expired")
@@ -57,17 +57,21 @@ class Controller:
             ef = view.enemy_flag
             if ef is not None and ef.carried:     # a teammate already has it
                 return None, "done"
+            if ef is not None and ef.dropped:     # lying where our carrier was tagged: pick it up again
+                return ef.pos, None
             return view.enemy_base, None
         if cmd == "defend_base":            
             if view.own_flag.carried:             # reflex: chase the thief
                 return view.own_flag.pos, None
+            if view.own_flag.dropped and view.rules.dropped_flag_return_on_touch:
+                return view.own_flag.pos, None    # reflex: touch the dropped flag to send it home
             return view.own_base, None
         if cmd == "hold":
             return agent.pos, None
         cell = resolve_target(view, target)
         if cmd == "intercept":
-            if isinstance(target, str) and target.lower() == "enemy_carrier":
-                return (cell, None) if cell is not None else (None, "done")  # thief gone/tagged
+            if isinstance(target, str) and target.lower() in DYNAMIC_TARGETS:
+                return (cell, None) if cell is not None else (None, "done")  # thief / carrier gone or tagged
             return (cell, None) if cell is not None else (None, "failed")
         if cmd in ("go_to", "scout"):
             if cell is None:

@@ -1,0 +1,13 @@
++ uv run python -m rl.evaluate --checkpoint runs/v2_run1/checkpoints/step_0006000640.pt --eval-config configs/rl/eval.yaml --out outputs/eval/v2_run1_6.0M.json
+   Building multi-agent-ctf @ file:///Users/aaravgang/Desktop/Multiagent_CTF
+      Built multi-agent-ctf @ file:///Users/aaravgang/Desktop/Multiagent_CTF
+Uninstalled 1 package in 2ms
+Installed 1 package in 3ms
+  vs random             as red  87/100 wins
+  vs random             as blue 84/100 wins
+  vs stay               as red  77/100 wins
+  vs stay               as blue 78/100 wins
+  vs scripted_leash     as red  96/100 wins
+  vs scripted_leash     as blue 95/100 wins
+  vs scripted_parked    as red  87/100 wins
+  vs scripted_parked    as blue 82/100 wins

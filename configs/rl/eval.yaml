@@ -64,16 +64,17 @@ held_out:
     - {label: pillars, path: configs/maps/pillars.yaml}
     - {label: two_corridors, path: configs/maps/two_corridors.yaml}
 
-# Role-swap sensitivity: at every decision the role inputs (one-hot + role head) of the named role
-# pairs are swapped and the argmax action is compared with the unswapped one. A policy that ignores
-# its role scores 0%. min_change_rate is the pass line per pair (an uncalibrated sanity floor: no v2
-# policy had been trained when it was set; tune it after the first Colab run).
+# Role-swap sensitivity (REPORT ONLY, no pass/fail key on purpose): at every decision the role inputs
+# (one-hot + role head) of the named role pairs are swapped and the argmax action is compared with the
+# unswapped one. A policy that ignores its role scores 0%, but an UNTRAINED network already scores roughly
+# 55-96% (the value depends on the random seed; the Run 1 policy at 3.75M steps scored 40-74%), so a
+# threshold would prove nothing. Judge role specialisation from the behaviour numbers instead (defender
+# distance to its own flag, scout coverage, per-role action histograms and heatmaps).
 role_swap:
   enabled: true
   episodes: 20               # games played (per opponent) to collect decisions
   opponents: [scripted_chaser, scripted_escort]
   swaps: [[attacker, defender], [attacker, scout], [defender, scout]]
-  min_change_rate: 0.1
 
 # Argmax (what the demo plays) vs sampled actions (what training used), same seeded games.
 policy_check:

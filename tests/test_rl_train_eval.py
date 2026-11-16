@@ -27,8 +27,7 @@ def _tiny_eval_yaml(tmp_path, name="eval_tiny.yaml") -> str:
         "route_roles": ["attacker"],
         "opponents": [{"kind": "random", "label": "random", "params": {}}, {"kind": "stay", "label": "stay", "params": {}}],
         "held_out": {"episodes": 2, "opponents": ["random"], "maps": []},
-        "role_swap": {"enabled": True, "episodes": 2, "opponents": ["random"], "swaps": [["attacker", "defender"]],
-                      "min_change_rate": 0.1},
+        "role_swap": {"enabled": True, "episodes": 2, "opponents": ["random"], "swaps": [["attacker", "defender"]]},
         "policy_check": {"enabled": False, "episodes": 2, "opponents": ["random"]},
     }
     path = tmp_path / name
@@ -255,3 +254,115 @@ def test_log_eval_writes_an_event_record_that_curve_readers_skip(tmp_path) -> No
     rows = read_metrics(tmp_path / "metrics.jsonl")
     assert "event" not in rows[0] and rows[1]["event"] == "noise_free_eval"
     assert rows[1]["eval/mean_win_rate"] == 0.5 and rows[1]["eval/nan"] is None
+
+
+# ------------------------------------------------- C1.1: bad eval opponents stop the run at startup
+
+
+def _eval_yaml_with(tmp_path, *, opponents, held_out=None, name="eval_bad.yaml") -> str:
+    data = yaml.safe_load(open(_tiny_eval_yaml(tmp_path, name)))
+    data["opponents"] = opponents
+    data["held_out"] = held_out or {"episodes": 2, "opponents": [opponents[0]["label"]], "maps": []}
+    data["role_swap"]["opponents"] = [opponents[0]["label"]]
+    data["policy_check"]["opponents"] = [opponents[0]["label"]]
+    (tmp_path / name).write_text(yaml.safe_dump(data))
+    return str(tmp_path / name)
+
+
+def _startup(cfg, tmp_path, eval_path):
+    nf = replace(cfg.noise_free_eval, enabled=True, config_path=eval_path, overrides={})
+    cfg = replace(cfg, noise_free_eval=nf)
+    return Trainer(cfg, load_base_env_config(cfg, ROOT), tmp_path / "run")
+
+
+_CKPT_OPP = {"kind": "checkpoint", "label": "frozen", "params": {"source": "file", "window": 0, "path": "", "deterministic": True}}
+_STAY = {"kind": "stay", "label": "stay", "params": {}}
+
+
+def test_an_eval_opponent_that_needs_a_league_stops_the_run_at_startup(tmp_path) -> None:
+    league_opp = {"kind": "checkpoint", "label": "past_self",
+                  "params": {"source": "league", "window": 0, "path": "", "deterministic": True}}
+    path = _eval_yaml_with(tmp_path, opponents=[_STAY, league_opp])
+    with pytest.raises(ConfigError, match=r"noise_free_eval: opponent 'past_self'.*league"):
+        _startup(tiny_config(str(tmp_path)), tmp_path, path)
+
+
+def test_a_missing_checkpoint_file_in_the_eval_stops_the_run_at_startup(tmp_path) -> None:
+    opp = {**_CKPT_OPP, "params": {**_CKPT_OPP["params"], "path": str(tmp_path / "gone.pt")}}
+    path = _eval_yaml_with(tmp_path, opponents=[_STAY, opp])
+    with pytest.raises(ConfigError, match=r"opponent 'frozen'.*file not found"):
+        _startup(tiny_config(str(tmp_path)), tmp_path, path)
+
+
+def test_an_eval_checkpoint_with_the_wrong_team_size_stops_the_run_at_startup(tmp_path) -> None:
+    from league_helpers import write_snapshot
+
+    four = load_rl_config(ROOT / "configs" / "rl" / "default.yaml")  # 4 agents per team; the tiny env below has 3
+    four = replace(four, model=replace(four.model, conv_channels=[4], hidden_size=16),
+                   run=replace(four.run, output_dir=str(tmp_path)))
+    ckpt = write_snapshot(tmp_path / "four", 16, four)
+    opp = {**_CKPT_OPP, "params": {**_CKPT_OPP["params"], "path": str(ckpt)}}
+    path = _eval_yaml_with(tmp_path, opponents=[_STAY, opp])
+    with pytest.raises(ConfigError, match=r"opponent 'frozen'.*4 agents per team"):
+        _startup(tiny_config(str(tmp_path)), tmp_path, path)
+
+
+def test_an_invalid_minimax_parameter_in_the_eval_stops_the_run_at_startup(tmp_path) -> None:
+    weights = {"win": 1000.0, "carry_progress": 4.0, "pickup": 20.0, "approach": 1.0, "approach_others": 0.5, "escort": 2.0,
+               "enemy_carry_progress": 4.0, "enemy_pickup": 20.0, "defend": 1.0, "alive": 3.0, "pressure": 1.5}
+    params = {"depth": 0, "own_moves_per_agent": 2, "enemy_moves_per_agent": 2, "danger_radius": 3,
+              "max_nodes": 4000, "alpha_beta": True, "weights": weights}
+    path = _eval_yaml_with(tmp_path, opponents=[_STAY, {"kind": "minimax", "label": "minimax", "params": params}])
+    with pytest.raises(ConfigError, match=r"opponent 'minimax'.*depth"):
+        _startup(tiny_config(str(tmp_path)), tmp_path, path)
+
+
+def test_a_bad_held_out_map_stops_the_run_at_startup(tmp_path) -> None:
+    held = {"episodes": 2, "opponents": ["stay"], "maps": [{"label": "ghost", "path": str(tmp_path / "ghost.yaml")}]}
+    path = _eval_yaml_with(tmp_path, opponents=[_STAY], held_out=held)
+    with pytest.raises(ConfigError, match=r"held-out map 'ghost' cannot be read"):
+        _startup(tiny_config(str(tmp_path)), tmp_path, path)
+
+
+def test_opponents_are_also_checked_on_the_held_out_maps_they_will_play(tmp_path, monkeypatch) -> None:
+    """Each held-out map gets its own dry build, with the opponents that map will actually play."""
+    built = []
+    real = train_eval.build_eval_opponent
+    monkeypatch.setattr(train_eval, "build_eval_opponent", lambda spec, config, rng: built.append((spec.label, config.obstacles)) or real(spec, config, rng))
+    cfg = load_rl_config(ROOT / "configs" / "rl" / "default.yaml")
+    eval_cfg = train_eval.load_training_eval_config(cfg, ROOT)
+    train_eval.validate_eval_opponents(eval_cfg, load_base_env_config(cfg, ROOT))
+    main_runs = 2 * len(eval_cfg.opponents)  # fixed and randomized spawns
+    held_runs = len(eval_cfg.held_out.maps) * len(eval_cfg.held_out.opponents)
+    assert len(built) == main_runs + held_runs and held_runs > 0
+
+
+@pytest.mark.parametrize("name", ["eval_train.yaml", "eval.yaml"])
+def test_the_shipped_eval_configs_pass_the_startup_check_on_the_shipped_env(name) -> None:
+    from rl.eval_config import load_eval_config
+
+    cfg = load_rl_config(ROOT / "configs" / "rl" / "default.yaml")
+    train_eval.validate_eval_opponents(load_eval_config(ROOT / "configs" / "rl" / name), load_base_env_config(cfg, ROOT))
+
+
+def test_a_good_eval_opponent_file_passes_and_a_failing_eval_is_still_caught_during_training(tmp_path, monkeypatch) -> None:
+    from league_helpers import write_snapshot
+
+    cfg = tiny_config(str(tmp_path), total_steps=16, checkpoint_every_steps=16)
+    ckpt = write_snapshot(tmp_path / "ok", 16, cfg)
+    opp = {**_CKPT_OPP, "params": {**_CKPT_OPP["params"], "path": str(ckpt)}}
+    path = _eval_yaml_with(tmp_path, opponents=[_STAY, opp])
+    trainer = _startup(replace(cfg, noise_free_eval=replace(cfg.noise_free_eval, every_steps=16, at_end=True)), tmp_path, path)
+    monkeypatch.setattr(trainer.evaluator, "run", lambda *a, **k: (_ for _ in ()).throw(RuntimeError("boom")))
+    trainer.run()  # the startup check passed; a failure LATER is reported and training goes on
+    assert _events(tmp_path / "run", "noise_free_eval_failed")
+
+
+def test_the_role_swap_numbers_are_in_the_scalars_but_not_in_the_console_line() -> None:
+    scalars = {"eval/mean_win_rate": 0.5, "eval/min_win_rate": 0.25, "eval/role_swap_changed": 0.9, "eval/seconds": 3.0}
+    line = train_eval.NoiseFreeEvaluator.summary(scalars)
+    assert "mean win 0.50" in line and "role" not in line  # report-only numbers must not read like a quality metric
+    results = {"x": {"all": {"win": {"rate": 1.0}, "draw": {"rate": 0.0}, "loss": {"rate": 0.0}, "stay_fraction": {"all": 0.0}}}}
+    swap = {"all": {"rate": 0.9}, "pairs": {"attacker<->scout": {"rate": 0.8}}}
+    out = train_eval.flatten_scalars(results, {"role_swap": swap})
+    assert out["eval/role_swap_changed"] == 0.9 and out["eval/role_swap/attacker<->scout"] == 0.8

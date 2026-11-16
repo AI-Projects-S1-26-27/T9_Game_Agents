@@ -47,7 +47,7 @@ def _cfg(**kw) -> EvalConfig:
         opponents=[EvalOpponent("random", "random", {}), EvalOpponent("stay", "stay", {})],
         held_out=HeldOutConfig(episodes=2, opponents=["random"], maps=[]),
         role_swap=RoleSwapConfig(enabled=True, episodes=2, opponents=["random"],
-                                 swaps=[[Role.ATTACKER, Role.DEFENDER], [Role.ATTACKER, Role.SCOUT]], min_change_rate=0.1),
+                                 swaps=[[Role.ATTACKER, Role.DEFENDER], [Role.ATTACKER, Role.SCOUT]]),
         policy_check=PolicyCheckConfig(enabled=True, episodes=2, opponents=["random", "stay"]),
     )
     base.update(kw)
@@ -96,7 +96,7 @@ def test_shipped_eval_configs_have_the_new_sections(name) -> None:
     labels = {o.label for o in cfg.opponents}
     assert set(cfg.held_out.opponents) <= labels and set(cfg.role_swap.opponents) <= labels
     assert set(cfg.policy_check.opponents) <= labels
-    assert cfg.role_swap.min_change_rate > 0 and [Role.ATTACKER, Role.DEFENDER] in cfg.role_swap.swaps
+    assert [Role.ATTACKER, Role.DEFENDER] in cfg.role_swap.swaps
 
 
 def test_shipped_held_out_maps_fit_the_v2_environment_and_are_not_the_training_map() -> None:
@@ -140,8 +140,8 @@ def test_new_eval_sections_are_strict(tmp_path) -> None:
         load({**base, "held_out": {**base["held_out"], "episodes": 3}})
     with pytest.raises(ConfigError, match="divisible"):
         load({**base, "role_swap": {**base["role_swap"], "episodes": 5}})
-    with pytest.raises(ConfigError, match="min_change_rate"):
-        load({**base, "role_swap": {**base["role_swap"], "min_change_rate": 1.5}})
+    with pytest.raises(ConfigError, match="min_change_rate"):  # the old pass line is gone: role-swap is report-only
+        load({**base, "role_swap": {**base["role_swap"], "min_change_rate": 0.1}})
     with pytest.raises(ConfigError, match="two different roles"):
         load({**base, "role_swap": {**base["role_swap"], "swaps": [["attacker", "attacker"]]}})
     with pytest.raises(ConfigError, match="is not one of"):
@@ -161,7 +161,7 @@ def test_new_eval_sections_are_strict(tmp_path) -> None:
     off = load({**base, "role_swap": {**base["role_swap"], "enabled": False, "opponents": [], "swaps": []},
                 "policy_check": {**base["policy_check"], "enabled": False, "opponents": []}})
     assert not off.role_swap.enabled and not off.policy_check.enabled
-    assert load_eval_config(ROOT / "configs" / "rl" / "eval.yaml", {"role_swap.min_change_rate": 0.3}).role_swap.min_change_rate == 0.3
+    assert load_eval_config(ROOT / "configs" / "rl" / "eval.yaml", {"role_swap.episodes": 4}).role_swap.episodes == 4
 
 
 # ----------------------------------------------------------------------------- held-out maps
@@ -315,21 +315,29 @@ def test_role_swap_probe_counts_only_alive_agents_of_the_swapped_roles() -> None
 # ---------------------------------------------------------------------------- role-swap check
 
 
+def _has_no_verdict(node) -> bool:
+    """True when no pass/fail flag or threshold appears anywhere in a role-swap result."""
+    if isinstance(node, dict):
+        return not ({"passed", "min_change_rate"} & set(node)) and all(_has_no_verdict(v) for v in node.values())
+    return True
+
+
 def test_role_swap_check_detects_a_policy_that_uses_roles() -> None:
     env_config = small_env_config(max_episode_steps=12)
     policy = _peaked_policy(env_config, role_preferences={0: 0, 1: 1, 2: 2})  # each role prefers its own action
     out = ev.role_swap_check(policy, ROLES3, env_config, _cfg())
     assert set(out["pairs"]) == {"attacker<->defender", "attacker<->scout"}
-    assert out["all"]["n"] > 0 and out["all"]["rate"] > 0.25 and out["passed"]  # masked moves (walls) cap it below 1
+    assert out["all"]["n"] > 0 and out["all"]["rate"] > 0.25  # masked moves (walls) cap it below 1
     for stat in out["pairs"].values():
-        assert stat["passed"] and stat["lo"] <= stat["rate"] <= stat["hi"] and stat["n"] > 0
+        assert stat["lo"] <= stat["rate"] <= stat["hi"] and stat["n"] > 0
+    assert _has_no_verdict(out)
 
 
 def test_role_swap_check_scores_zero_for_a_policy_that_ignores_roles() -> None:
     env_config = small_env_config(max_episode_steps=12)
     out = ev.role_swap_check(_peaked_policy(env_config, role_preferences=None), ROLES3, env_config, _cfg())
     assert out["all"]["count"] == 0 and out["all"]["rate"] == 0.0 and out["all"]["n"] > 0
-    assert not out["passed"] and not any(p["passed"] for p in out["pairs"].values())
+    assert _has_no_verdict(out)  # a zero is reported as a number, not as a FAIL
 
 
 def test_role_swap_check_is_deterministic_and_errors_are_clear() -> None:
@@ -402,8 +410,9 @@ def test_format_extras_prints_every_section(tmp_path) -> None:
     cfg = _cfg(held_out=HeldOutConfig(2, ["random"], [HeldOutMap("tiny", _map_yaml(tmp_path))]))
     extras = ev.evaluate_extras(_peaked_policy(env_config, role_preferences=None), ROLES3, env_config, cfg)
     text = ev.format_extras(extras, {"confidence": 0.95})
-    for word in ("held-out maps", "tiny", "role-swap check", "attacker<->defender", "FAIL", "argmax vs sampled", "diff CI"):
+    for word in ("held-out maps", "tiny", "role-swap check", "attacker<->defender", "REPORT ONLY", "argmax vs sampled", "diff CI"):
         assert word in text
+    assert "PASS" not in text and "FAIL" not in text  # role-swap numbers carry no verdict (an untrained net scores high)
     assert ev.format_extras({"held_out": None, "role_swap": None, "policy_check": None}, {"confidence": 0.95}) == ""
 
 

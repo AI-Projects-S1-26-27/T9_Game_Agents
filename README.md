@@ -59,6 +59,25 @@ uv run tensorboard --logdir runs
 
 Ctrl+C saves a checkpoint before exiting, so a run can always be continued with `--resume latest`.
 
+Settings worth knowing for a long run (for example on Google Colab):
+
+* `rollout.total_steps` is 5,000,000 by default. The first two curriculum phases end after at most 2.5M steps in total
+  (their `max_steps`), the last phase runs to the end.
+* Keep `run.keep_checkpoints: 0` (the default, keep every periodic checkpoint). A positive value deletes the early
+  `step_*.pt` files, which an early-versus-late comparison and the time-lapse need; each file is only a few MB.
+  Do not pass `--set run.keep_checkpoints=5` on Colab.
+* `league.directory` (league training only, `league.snapshot_every_steps > 0`): where the frozen-opponent snapshots live.
+  `""` means `<run>/league`. On Colab set it to a LOCAL path such as `/content/league`
+  (`--set league.directory=/content/league`): the workers list that folder and load snapshots from it at every episode
+  reset, which is slow on the Google Drive mount, and Drive does not guarantee the atomic rename the snapshot writer
+  relies on. A new run refuses a non-empty explicit folder (stale snapshots would silently become its opponents);
+  `--resume` keeps it, and if the local disk was wiped the league just starts empty again. Snapshots are plain
+  checkpoints: copy them to Drive and they play in the viewer and `rl.evaluate`.
+* Opponents of `kind: checkpoint` (frozen policies) are exempt from the phase's `opponent_noise`; the noise only
+  perturbs scripted, random and minimax opponents.
+* `noise_free_eval` is validated when training starts: an evaluation opponent that cannot be built (bad file, wrong
+  team size, invalid parameter, `source: league`) stops the run immediately instead of failing at step 500k.
+
 The shipped default trains on the v2 rules with **4 agents per team** (two attackers, a defender, a scout):
 `env.config_path: configs/ctf_v2.yaml`, `roles.slots: [attacker, attacker, defender, scout]`. Metrics are split
 per opponent label (`win_rate/opp_<label>`, `draw_rate/...`, `loss_rate/...`) and per spawn style
@@ -92,7 +111,8 @@ uv run python -m rl.evaluate --checkpoint runs/colab_run1/checkpoints/latest.pt 
 
 After the main table the same command also runs three checks (configured in the same YAML, skip with
 `--skip held_out role_swap policy_check`): the policy on **held-out maps** (other 11x7 layouts from `configs/maps`),
-a **role-swap sensitivity check** (does the argmax action change when the role inputs are swapped?) and an
+a **role-swap sensitivity check** (does the argmax action change when the role inputs are swapped? REPORT ONLY, no
+pass/fail: an untrained network already scores high, so judge role specialisation from the per-role behaviour numbers) and an
 **argmax-vs-sampled check**. Training can run a small version of the same evaluation every few hundred thousand
 steps (`noise_free_eval` in `configs/rl/default.yaml`, small settings in `configs/rl/eval_train.yaml`); its results are
 `noise_free_eval` events in `metrics.jsonl` and `eval/...` scalars in TensorBoard, kept apart from the noisy training curve.

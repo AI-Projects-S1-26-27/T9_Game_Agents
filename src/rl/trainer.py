@@ -12,11 +12,12 @@ from rl.buffer import RolloutBuffer
 from rl.checkpoint import CheckpointManager, load_checkpoint, restore_training_state
 from rl.config import RLConfig
 from rl.curriculum import Curriculum
-from rl.league import LeagueStore, LeagueWriter, validate_file_opponents
+from rl.league import LeagueStore, LeagueWriter, resolve_league_dir, validate_file_opponents
 from rl.mappo import MAPPO, ValueNorm
 from rl.metrics import MetricsLogger, summarize_episodes
 from rl.networks import ActorCritic, NetworkSpec
 from rl.rollout import collect
+from rl.schema import ConfigError
 from rl.train_eval import NoiseFreeEvaluator
 from rl.vec_env import make_vec_env
 
@@ -58,7 +59,12 @@ class Trainer:
         # Fails here, before any training, if the eval YAML is invalid.
         self.evaluator = NoiseFreeEvaluator(cfg, env_config, run_dir) if cfg.noise_free_eval.enabled else None
         validate_file_opponents(cfg)  # a missing opponent file stops the run now, not hours in
-        self.league_dir = run_dir / "league"
+        self.league_dir = resolve_league_dir(cfg, run_dir)
+        if cfg.league.directory and resume_from is None and LeagueStore(self.league_dir, 1).snapshots():
+            raise ConfigError(
+                f"league.directory {self.league_dir} already holds snapshots, and a new run would play them as its "
+                "opponents. Use an empty folder (or delete them), or --resume to continue the run they belong to."
+            )
         self.league = LeagueWriter(self.league_dir, cfg.league.keep_snapshots) if cfg.league.snapshot_every_steps > 0 else None
         if resume_from is not None:
             payload = load_checkpoint(resume_from, map_location="cpu")

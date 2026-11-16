@@ -8,7 +8,9 @@ run:
   device: cpu                      # cpu | cuda | mps | auto  (cpu is fastest for this tiny net)
   torch_threads: 2
   checkpoint_every_steps: 250000
-  keep_checkpoints: 0              # newest periodic checkpoints kept (0 = keep all; keeping all feeds the time-lapse)
+  keep_checkpoints: 0              # newest periodic checkpoints kept (0 = keep all; keeping all feeds the time-lapse).
+                                   # Keep 0 on Colab too: a positive value deletes the early step_*.pt files, and an
+                                   # early-vs-late comparison or a time-lapse needs them (each is ~1.4 MB, so 20 files is nothing)
   log_every_updates: 1
   tensorboard: true                # also write TensorBoard event files
 
@@ -75,7 +77,7 @@ rollout:
   num_envs: 16
   num_workers: 4                   # worker processes, at most num_envs; 0 = run in the main process (debugging)
   rollout_length: 128
-  total_steps: 6000000             # environment steps (one step = both teams moving once)
+  total_steps: 5000000             # environment steps (one step = both teams moving once); phases 1+2 may take at most 2.5M of them
 
 curriculum:
   learner_side: random             # red | blue | random, drawn per episode
@@ -107,7 +109,7 @@ curriculum:
       advance_win_rate: 0.7
       window_episodes: 200
       fixed_spawn_fraction: 0.3
-      opponent_noise: 0.05
+      opponent_noise: 0.05         # share of a SCRIPTED/random/minimax opponent's moves replaced by random ones (never a kind: checkpoint opponent)
       env_overrides:
         visibility_radius: 6
         spawn_mode: near_base
@@ -125,7 +127,7 @@ curriculum:
 
     # Phase 3: the real setting (radius 3), every opponent style, including chasers and escorted attackers.
     - name: real_setting
-      max_steps: 3500000
+      max_steps: 2500000           # not used: the last phase runs to rollout.total_steps (1M + 1.5M + 2.5M = 5M)
       advance_win_rate: 1.0        # last phase: runs until rollout.total_steps
       window_episodes: 200
       fixed_spawn_fraction: 0.5
@@ -162,6 +164,8 @@ noise_free_eval:
   overrides: {}                    # e.g. {episodes: 40} on top of that file
 
 league:                            # frozen past policies as opponents (kind: checkpoint, docs/league.md); off here
-  snapshot_every_steps: 0          # >0: save a weights-only snapshot into <run>/league/ after every multiple of this
+  snapshot_every_steps: 0          # >0: save a weights-only snapshot into the league folder after every multiple of this
   keep_snapshots: 0                # newest snapshots kept on disk (0 = all)
   cache_size: 4                    # policies each worker process keeps loaded
+  directory: ""                    # league folder; "" = <run>/league. On Colab set a LOCAL path (e.g. /content/league):
+                                   # workers list it and load from it at every episode reset, which is slow on Drive

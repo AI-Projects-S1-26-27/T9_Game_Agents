@@ -469,6 +469,10 @@ def role_swap_check(
 ) -> dict[str, Any]:
     """Does the policy use its role input? Swap roles in its inputs and count changed argmax actions.
 
+    Report only: there is no pass/fail line. An untrained network already scores roughly 55-96% (it depends on
+    the random seed) and a trained one can score lower, so a threshold would prove nothing. A policy that
+    ignores its roles scores 0, which is the one thing this number can prove.
+
     The games are played by the policy itself (in the configured policy mode) against the
     ``role_swap.opponents``; at every decision each configured pair of roles (A, B) is swapped for
     the whole team (agents playing A are shown B, agents playing B are shown A; both the role
@@ -494,18 +498,14 @@ def role_swap_check(
     per_pair: dict[str, Any] = {}
     for (a, b), (changed, total) in probe.counts.items():
         stat = rate(changed, total, cfg.confidence)
-        per_pair[f"{a.value}<->{b.value}"] = {
-            **stat, "passed": stat["rate"] is not None and stat["rate"] >= rs.min_change_rate,
-        }
+        per_pair[f"{a.value}<->{b.value}"] = stat
     all_changed = sum(c for c, _ in probe.counts.values())
     all_total = sum(t for _, t in probe.counts.values())
     return {
         "episodes": rs.episodes,
         "opponents": list(rs.opponents),
-        "min_change_rate": rs.min_change_rate,
         "pairs": per_pair,
         "all": rate(all_changed, all_total, cfg.confidence),
-        "passed": bool(per_pair) and all(p["passed"] for p in per_pair.values()),
     }
 
 
@@ -691,13 +691,13 @@ def format_extras(extras: dict[str, Any], meta: dict[str, Any]) -> str:
                 lines.append(f"  {map_label:<18}{'(mean over opponents)':<18}{'':>5} {100 * sum(wins) / len(wins):6.1f}")
     swap = extras.get("role_swap")
     if swap:
-        lines += ["", f"role-swap check: share of decisions whose argmax action changes when roles are swapped "
-                      f"(a pair passes at >= {100 * swap['min_change_rate']:.0f}%; a policy that ignores roles scores 0)"]
+        lines += ["", "role-swap check (REPORT ONLY, no pass/fail): share of decisions whose argmax action changes when the roles "
+                      "are swapped. 0 = the policy ignores its roles; an UNTRAINED network already scores roughly 55-96% "
+                      "(it depends on the seed), so neither a high nor a low value says how well roles are used. "
+                      "Judge role specialisation from the per-role behaviour above."]
         for pair, stat in swap["pairs"].items():
-            lines.append(
-                f"  {pair:<22} {_pct(stat)}% {_ci(stat)} of {stat['n']:>6} decisions  {'PASS' if stat['passed'] else 'FAIL'}"
-            )
-        lines.append(f"  overall {'PASS' if swap['passed'] else 'FAIL'}: {_pct(swap['all'])}% of {swap['all']['n']} decisions changed")
+            lines.append(f"  {pair:<22} {_pct(stat)}% {_ci(stat)} of {stat['n']:>6} decisions")
+        lines.append(f"  overall {_pct(swap['all'])}% of {swap['all']['n']} decisions changed")
     check = extras.get("policy_check")
     if check:
         lines += ["", "argmax vs sampled actions (same seeded games; difference = argmax win% - sampled win%, approximate interval):",

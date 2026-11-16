@@ -56,13 +56,18 @@ class HeldOutConfig:
 
 @dataclass(frozen=True)
 class RoleSwapConfig:
-    """Does the policy actually use its role input? Re-ask it with swapped roles and count changed argmax actions."""
+    """Does the policy actually use its role input? Re-ask it with swapped roles and count changed argmax actions.
+
+    REPORT ONLY: there is deliberately no pass/fail threshold. A freshly initialised, untrained network already
+    changes roughly 55-96% of its actions when two roles are swapped (the value depends on the random seed; measured),
+    and the Run 1 policy scored 40-74%, so any "at least X%" line proves nothing. Role specialisation is judged from behaviour
+    (defender distance to its own flag, scout coverage, per-role action histograms and heatmaps).
+    """
 
     enabled: bool
     episodes: int  # games played (per opponent) to collect decisions, split evenly over `sides`
     opponents: list[str]  # labels from the top-level `opponents` list
     swaps: list[list[Role]]  # pairs [A, B]: every agent playing A is shown B and vice versa
-    min_change_rate: float  # a pair passes when at least this share of decisions changes
 
 
 @dataclass(frozen=True)
@@ -139,7 +144,6 @@ def _validate(cfg: EvalConfig) -> None:
     rs = cfg.role_swap
     split("role_swap", rs.episodes)
     known("role_swap", rs.opponents)
-    _check(0.0 <= rs.min_change_rate <= 1.0, "eval role_swap.min_change_rate must be in [0, 1]")
     for pair in rs.swaps:
         _check(len(pair) == 2 and pair[0] != pair[1], f"eval role_swap.swaps entries must be two different roles, got {[r.value for r in pair]}")
     if rs.enabled:

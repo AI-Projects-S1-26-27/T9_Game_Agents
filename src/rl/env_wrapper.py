@@ -20,7 +20,7 @@ from ctf.environment import CTFEnvironment
 from ctf.observations import ObservationMode
 from rl.config import LearnerSide, PhaseConfig, RLConfig, phase_env_config
 from rl.features import ActorFeatures, CriticFeatures, FeatureBuilder
-from rl.league import LeagueStore, build_checkpoint_opponent, get_store, is_league_spec, uses_league_source
+from rl.league import LeagueEmptyError, LeagueStore, build_checkpoint_opponent, get_store, is_league_spec, uses_league_source
 from rl.navigation import GridNav
 from rl.opponents import build_opponent
 from rl.rewards import COMPONENTS, RewardCalculator
@@ -61,6 +61,7 @@ class CTFTrainEnv:
         self._team = Team.RED
         self._opponent: BaseStrategy | None = None
         self._opponent_label = ""
+        self._opponent_noisy = True  # does phase.opponent_noise apply to this episode's opponent? (not to frozen policies)
         self._opponent_snapshot_step: int | None = None  # league opponents: the step of the snapshot being played
         self._league: LeagueStore | None = None
         if uses_league_source(cfg):
@@ -122,27 +123,29 @@ class CTFTrainEnv:
             return Team.BLUE
         return self._rng.choice([Team.RED, Team.BLUE])
 
-    def _choose_opponent(self, phase: PhaseConfig, env_config: CTFConfig) -> tuple[BaseStrategy, str, int | None]:
-        """Draw this episode's opponent by weight; returns (opponent, label, snapshot step or None).
+    def _choose_opponent(
+        self, phase: PhaseConfig, env_config: CTFConfig
+    ) -> tuple[BaseStrategy, str, int | None, bool]:
+        """Draw this episode's opponent by weight; returns (opponent, label, snapshot step or None, noisy).
 
-        League opponents are left out of the draw while the league is empty. If a league snapshot vanishes
-        between listing and loading (pruned), that entry is dropped for this draw and the rest re-drawn;
-        the config guarantees at least one non-league opponent per phase."""
+        ``noisy`` says whether the phase's ``opponent_noise`` applies: it does not for ``checkpoint`` opponents.
+        A league entry that finds the league empty (at the start, or because its snapshots vanished while being
+        drawn) is dropped for this draw, together with the other league entries (they share the folder), and the
+        rest is re-drawn; the config guarantees at least one non-league opponent per phase. Every other error
+        propagates."""
         pool = list(phase.opponents)
-        while True:
-            if self._league is not None and not self._league.snapshots():
-                pool = [o for o in pool if not is_league_spec(o)]
+        while pool:
             spec = self._rng.choices(pool, weights=[o.weight for o in pool], k=1)[0]
             rng = Random(self._rng.randrange(2**31))
             if not is_league_spec(spec):
-                return build_opponent(spec, env_config, rng), spec.label, None
+                return build_opponent(spec, env_config, rng), spec.label, None, spec.kind != "checkpoint"
             try:
                 opponent, step = build_checkpoint_opponent(spec.params, env_config, rng, self._league)
-            except ConfigError:
-                if not self._league.snapshots():  # emptied under us: fall back to the other opponents
-                    continue
-                raise
-            return opponent, spec.label, step
+            except LeagueEmptyError:
+                pool = [o for o in pool if not is_league_spec(o)]
+                continue
+            return opponent, spec.label, step, False
+        raise ConfigError(f"phase {phase.name!r} has no opponent left to play (the config check should prevent this)")
 
     def reset(self) -> EnvStep:
         if self._runtime is None or self.cfg.curriculum.phases[self._pending_phase] is not self._runtime.phase:
@@ -153,8 +156,8 @@ class CTFTrainEnv:
         self._fixed_spawns = self._rng.random() < phase.fixed_spawn_fraction
         self._env = rt.envs[self._fixed_spawns]
         self._team = self._choose_team()
-        self._opponent, self._opponent_label, self._opponent_snapshot_step = self._choose_opponent(
-            phase, rt.env_config
+        self._opponent, self._opponent_label, self._opponent_snapshot_step, self._opponent_noisy = (
+            self._choose_opponent(phase, rt.env_config)
         )
         self._opponent.reset()
 
@@ -190,7 +193,7 @@ class CTFTrainEnv:
         opp_obs = env.observe(ObservationMode.PARTIAL, team=opp_team)
         theirs = self._opponent.act(opp_obs, opp_team)
         noise = rt.phase.opponent_noise
-        if noise > 0:
+        if noise > 0 and self._opponent_noisy:  # frozen policies (kind: checkpoint) are never perturbed
             all_actions = list(Action)
             theirs = {
                 aid: (self._rng.choice(all_actions) if self._rng.random() < noise else act)

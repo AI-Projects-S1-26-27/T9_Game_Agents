@@ -167,6 +167,7 @@ class LeagueConfig:
     snapshot_every_steps: int  # save a weights-only snapshot after the update crossing each multiple (0 = never: no league)
     keep_snapshots: int  # newest snapshots kept on disk (0 = keep all)
     cache_size: int  # policies each worker process keeps loaded in memory
+    directory: str  # where snapshots live; "" = <run>/league. On Colab use a local path (e.g. /content/league), not Drive
 
 
 @dataclass(frozen=True)

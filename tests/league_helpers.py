@@ -32,6 +32,7 @@ def league_config(
     snapshot_every: int = 16,
     keep: int = 0,
     cache_size: int = 2,
+    directory: str = "",
     **tiny_kwargs,
 ) -> RLConfig:
     """Tiny 3-agent config whose single phase mixes `stay` with league opponents."""
@@ -40,7 +41,7 @@ def league_config(
     phase = replace(cfg.curriculum.phases[0], opponents=chosen, opponent_noise=0.0)
     return replace(
         cfg,
-        league=LeagueConfig(snapshot_every_steps=snapshot_every, keep_snapshots=keep, cache_size=cache_size),
+        league=LeagueConfig(snapshot_every_steps=snapshot_every, keep_snapshots=keep, cache_size=cache_size, directory=directory),
         curriculum=replace(cfg.curriculum, phases=[phase]),
     )
 

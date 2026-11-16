@@ -51,7 +51,6 @@ role_swap:
   episodes: 20
   opponents: [scripted_chaser]
   swaps: [[attacker, defender], [attacker, scout], [defender, scout]]
-  min_change_rate: 0.1
 
 policy_check:
   enabled: true

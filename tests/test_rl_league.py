@@ -83,7 +83,7 @@ def test_config_needs_snapshots_and_a_non_league_opponent(tmp_path) -> None:
 
 def test_league_settings_are_validated(tmp_path) -> None:
     cfg = rl_config()
-    for bad in (LeagueConfig(-1, 0, 1), LeagueConfig(0, -1, 1), LeagueConfig(0, 0, 0)):
+    for bad in (LeagueConfig(-1, 0, 1, ""), LeagueConfig(0, -1, 1, ""), LeagueConfig(0, 0, 0, ""), LeagueConfig(0, 0, 1, " /x")):
         with pytest.raises(ConfigError):
             replace(cfg, league=bad)
 
@@ -101,7 +101,7 @@ def test_old_checkpoint_configs_get_the_league_off() -> None:
     plain = to_dict(rl_config())
     del plain["league"]
     migrated = migrate_config(plain)
-    assert migrated["league"] == {"snapshot_every_steps": 0, "keep_snapshots": 0, "cache_size": 4}
+    assert migrated["league"] == {"snapshot_every_steps": 0, "keep_snapshots": 0, "cache_size": 4, "directory": ""}
     assert from_dict(RLConfig, migrated).league.snapshot_every_steps == 0
     assert migrate_config(migrated) == migrated  # idempotent
 
@@ -330,3 +330,190 @@ def test_old_configs_build_envs_without_a_league_dir() -> None:
     env = CTFTrainEnv(cfg, env_config_for(cfg), seed=0)
     env.reset()
     assert env._league is None
+
+
+# ------------------------------------------------- C1.1: noise, radius, old configs, re-draw
+
+
+def _noise_config(tmp_path, opponents, noise=1.0, **kw):
+    cfg = league_config(tmp_path, opponents=opponents, **kw)
+    phase = replace(cfg.curriculum.phases[0], opponent_noise=noise)
+    return replace(cfg, curriculum=replace(cfg.curriculum, phases=[phase]))
+
+
+class _Recorder:
+    """Wraps an opponent and remembers what it chose, so the test can compare it with what the env really played."""
+
+    def __init__(self, inner) -> None:
+        self.inner, self.last = inner, {}
+
+    def reset(self) -> None:
+        self.inner.reset()
+
+    def act(self, observation, team):
+        self.last = self.inner.act(observation, team)
+        return self.last
+
+
+def _replaced_actions(env: CTFTrainEnv, steps: int) -> tuple[int, int]:
+    """On an env that was just reset: play `steps` steps (learner idle) and count (opponent actions the env
+    replaced, opponent actions in total)."""
+    rec = _Recorder(env._opponent)
+    env._opponent = rec
+    played: list[dict] = []
+    real_step = env._env.step
+    env._env.step = lambda actions: (played.append(dict(actions)), real_step(actions))[1]
+    replaced = total = 0
+    for _ in range(steps):
+        result = env.step([4] * env.num_agents)
+        for aid, action in rec.last.items():
+            total += 1
+            replaced += int(played[-1][aid] != action)
+        if result.done:
+            break
+    return replaced, total
+
+
+def test_checkpoint_opponents_are_exempt_from_opponent_noise_but_scripted_ones_are_not(tmp_path) -> None:
+    ckpt = write_snapshot(tmp_path / "pre", 16, league_config(tmp_path, opponents=[STAY], snapshot_every=0))
+    # noise 1.0 would replace EVERY action; each kind of checkpoint opponent must still play exactly what it chose
+    for spec in (file_spec(ckpt, weight=50.0, deterministic=False), league_spec(weight=50.0)):
+        cfg = _noise_config(tmp_path, [STAY, spec])
+        league = tmp_path / f"league_{spec.label}"
+        write_snapshot(league, 7, cfg)
+        env = CTFTrainEnv(cfg, env_config_for(cfg), seed=0, league_dir=league)
+        counted = 0
+        for _ in range(12):
+            env.reset()
+            if env._opponent_label != spec.label:
+                continue
+            assert env._opponent_noisy is False
+            replaced, total = _replaced_actions(env, 40)
+            assert total > 0 and replaced == 0, f"{spec.label}: {replaced} of {total} actions were replaced by noise"
+            counted += 1
+        assert counted > 0
+    # control: the same noise DOES replace a non-checkpoint opponent's actions (so the check above can fail)
+    cfg = _noise_config(tmp_path, [STAY])
+    env = CTFTrainEnv(cfg, env_config_for(cfg), seed=0)
+    env.reset()
+    replaced, total = _replaced_actions(env, 60)
+    assert total > 0 and replaced > 0 and env._opponent_noisy is True
+
+
+def test_noise_still_applies_to_scripted_opponents_in_a_mixed_phase(tmp_path) -> None:
+    scripted = OpponentSpec("scripted", "guard", 50.0, {
+        "roles": ["attacker", "defender", "scout"], "guard_mode": "leash", "guard_leash": 2,
+        "scout_behavior": "random", "chase_radius": 0, "escort": False})
+    cfg = _noise_config(tmp_path, [STAY, scripted])
+    env = CTFTrainEnv(cfg, env_config_for(cfg), seed=3)
+    for _ in range(12):
+        env.reset()
+        if env._opponent_label == "guard":
+            replaced, total = _replaced_actions(env, 60)
+            assert env._opponent_noisy is True and replaced > 0 and total > 0
+            return
+    raise AssertionError("the scripted opponent was never drawn")
+
+
+@pytest.mark.parametrize("trained_radius,phase_radius", [(1, 20), (20, 1)])
+def test_a_checkpoint_plays_in_the_radius_of_the_phase_it_is_built_for(tmp_path, trained_radius, phase_radius) -> None:
+    """Snapshots trained at one visibility radius play (without error) in a phase with another; they see the PHASE's radius."""
+    train_cfg = league_config(tmp_path, opponents=[STAY], snapshot_every=0)
+    train_cfg = replace(train_cfg, curriculum=replace(train_cfg.curriculum, phases=[
+        replace(train_cfg.curriculum.phases[0], env_overrides={**train_cfg.curriculum.phases[0].env_overrides, "visibility_radius": trained_radius})]))
+    league = tmp_path / "league"
+    write_snapshot(league, 9, train_cfg)  # stores env_config_for(cfg) (the base env), whose radius is neither of the two
+    cfg = league_config(tmp_path, opponents=[STAY, league_spec(weight=100.0)])
+    cfg = replace(cfg, curriculum=replace(cfg.curriculum, phases=[
+        replace(cfg.curriculum.phases[0], env_overrides={**cfg.curriculum.phases[0].env_overrides, "visibility_radius": phase_radius})]))
+    env = CTFTrainEnv(cfg, env_config_for(cfg), seed=1, league_dir=league)
+    played = 0
+    for _ in range(6):
+        step = env.reset()
+        if env._opponent_label != "league":
+            continue
+        assert env._opponent.env_config.visibility_radius == phase_radius  # the opponent sees what its side sees
+        for _ in range(25):
+            step = env.step([4] * env.num_agents)
+            if step.done:
+                break
+        played += 1
+    assert played > 0
+
+
+def _rewrite_payload(path, edit) -> None:
+    payload = torch.load(path, map_location="cpu", weights_only=True)
+    edit(payload)
+    torch.save(payload, path)
+
+
+def test_load_policy_reads_checkpoints_written_before_the_league_section_or_its_directory_key(tmp_path) -> None:
+    """A v2_run1-style checkpoint (config without `league`) and a C1-style one (league without `directory`)."""
+    from rl.checkpoint import load_policy
+
+    cfg = league_config(tmp_path, opponents=[STAY], snapshot_every=0)
+    old = write_snapshot(tmp_path / "old", 1, cfg)
+    c1 = write_snapshot(tmp_path / "c1", 2, cfg)
+    _rewrite_payload(old, lambda p: p["config"].pop("league"))
+    _rewrite_payload(c1, lambda p: p["config"]["league"].pop("directory"))
+    for path in (old, c1):
+        model, meta = load_policy(path, "cpu")
+        assert meta["config"].league.directory == "" and meta["config"].league.snapshot_every_steps == 0
+        RLStrategy.from_checkpoint(path)  # and it plays
+
+
+def test_migrate_config_fills_a_missing_key_of_an_existing_section() -> None:
+    plain = to_dict(rl_config())
+    del plain["league"]["directory"]
+    assert migrate_config(plain)["league"]["directory"] == ""
+    plain["league"]["directory"] = "/content/league"
+    assert migrate_config(plain)["league"]["directory"] == "/content/league"  # a stored value is never overwritten
+
+
+def test_a_league_draw_that_loses_every_snapshot_falls_back_to_the_other_opponents(tmp_path, monkeypatch) -> None:
+    """Snapshots are listed but every load fails (pruned in between): no crash, the non-league opponent plays."""
+    from rl.league import PolicyCache
+
+    cfg = league_config(tmp_path, opponents=[STAY, league_spec(weight=100.0), league_spec("league2", weight=100.0, window=1)])
+    league = tmp_path / "league"
+    write_snapshot(league, 1, cfg)
+    env = CTFTrainEnv(cfg, env_config_for(cfg), seed=0, league_dir=league)
+
+    def vanished(self, path):
+        raise FileNotFoundError(path)
+
+    monkeypatch.setattr(PolicyCache, "get", vanished)
+    assert _labels(env, 20) == Counter({"stay": 20})  # all league entries are dropped together, never an error
+    assert env._opponent_snapshot_step is None
+
+
+def test_other_league_errors_are_not_swallowed_by_the_fallback(tmp_path) -> None:
+    """Only an EMPTY league falls back; a snapshot that does not fit the environment is still a loud error."""
+    cfg = league_config(tmp_path, opponents=[STAY, league_spec(weight=100.0)])
+    league = tmp_path / "league"
+    four = load_rl_config(ROOT / "configs" / "rl" / "default.yaml")
+    four = replace(four, model=replace(four.model, conv_channels=[4], hidden_size=16))
+    write_snapshot(league, 1, four)  # 4 agents per team, the env below has 3
+    env = CTFTrainEnv(cfg, env_config_for(cfg), seed=0, league_dir=league)
+    with pytest.raises(ConfigError, match="agents per team"):
+        for _ in range(10):
+            env.reset()
+
+
+def test_a_league_draw_lists_the_folder_once(tmp_path, monkeypatch) -> None:
+    """Each league game costs one directory listing (it used to be two: an emptiness check, then the draw)."""
+    import os
+
+    cfg = league_config(tmp_path, opponents=[STAY, league_spec(weight=1000.0)])
+    league = tmp_path / "league"
+    write_snapshot(league, 1, cfg)
+    env = CTFTrainEnv(cfg, env_config_for(cfg), seed=0, league_dir=league)
+    env.reset()  # warm the policy cache
+    calls = []
+    real = os.listdir
+    monkeypatch.setattr(os, "listdir", lambda path=".": (calls.append(str(path)), real(path))[1])
+    games = 0
+    for _ in range(10):
+        env.reset()
+        games += env._opponent_label == "league"
+    assert games >= 8 and calls.count(str(league)) == games  # one listing per league game, none for the others

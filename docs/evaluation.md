@@ -66,11 +66,19 @@ the policy's environment. A map with a different width, height or `agents_per_te
 for each pair `[A, B]` in `swaps`, the network is asked again with the roles of the whole team swapped (agents playing A
 are shown B and the other way round; BOTH the role one-hot in the input vector and the role-specific output head
 change; what the agent sees and `self_can_carry` do not). The result is the share of decisions whose argmax action
-changed (Wilson interval), per pair and overall. A policy that ignores its role scores 0. A pair passes when the share
-is at least `min_change_rate`. Read it with care: it proves the role input is *used*, not that it is used *well*
-(an untrained network already scores high, about 0.9 in a measurement on random weights); the meaningful evidence is
-the per-role behaviour (action histograms, heatmaps, defender distance). `min_change_rate` was set before any v2 policy
-was trained and is a sanity floor, not a calibrated threshold.
+changed (Wilson interval), per pair and overall. A policy that ignores its role scores 0, which is the only thing this
+number can prove.
+
+**Report only, no pass/fail.** An earlier version had a `min_change_rate` pass line. It was removed (the key is now an
+unknown-key error in the eval YAML) because it could not fail: on the v2 architecture, three freshly initialised
+networks scored 71 / 93 / 96, 77 / 58 / 84 and 93 / 86 / 63 % for attacker<->defender / attacker<->scout /
+defender<->scout (overall 72-85%), and the Run 1 policy at 3.75M steps scored 62 / 74 / 40% (overall 60%). Training
+does not push the number up, so it is neither a floor nor a target. It shows that the role input is *used*, not that it
+is used *well*. Role specialisation is judged from the behaviour numbers that the evaluation already reports: the
+defender's distance to its own flag and base, scout map coverage, per-role action histograms and position heatmaps.
+No thresholds are set for those either: with one trained model and no untrained reference run there is no data to
+justify a number, so they stay reported values (compare them between runs and against the scripted opponents).
+(Measured on `configs/rl/eval.yaml`'s role-swap settings, 20 games per opponent, seeds 0-2 for the untrained networks.)
 
 **Argmax vs sampled** (`policy_check`). For each listed opponent the same seeded games are played once with argmax and
 once with sampled actions (sampling generator reseeded with `seed`). Reported: win/draw/loss for each mode, the
@@ -97,7 +105,13 @@ of the eval YAML (for example `{episodes: 40}`). The eval seed is fixed, so succ
 It does not disturb training: it uses its own random generators and restores the model's train/eval mode (a test
 trains the same seed with and without it and compares the weights). If an evaluation raises, the run prints the error,
 logs a `noise_free_eval_failed` event and keeps training. The eval YAML is loaded when the trainer is built, so a
-wrong path or a team-size mismatch stops the run before any training.
+wrong path or a team-size mismatch stops the run before any training. The same startup check builds every eval opponent
+once (on the main evaluation's environments and, for each held-out map, on that map's environment with the opponents it
+will play), so an opponent that could never work (`source: league`, which an evaluation cannot play because it has no
+league; a missing or incompatible checkpoint file; a wrong role count; an invalid minimax or scripted parameter; an
+unreadable or wrong-sized held-out map) raises a `ConfigError` naming the opponent right away. Without it the run would
+only discover the problem at the first evaluation (step 500k) and fail again at every later one. The console line of an
+evaluation shows win rates only; the role-swap numbers are in `metrics.jsonl` / TensorBoard as reported values.
 Cost: one evaluation with `eval_train.yaml` took about 33 s on a single sandbox CPU core with an untrained 4-agent
 network (full 200-step games); it was not timed on Colab. Raise `every_steps` or lower `overrides.episodes` if it
 slows a run too much.

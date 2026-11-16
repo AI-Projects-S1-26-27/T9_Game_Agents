@@ -272,7 +272,7 @@ def _cfg(**kw) -> EvalConfig:
         fixed_spawn_fraction=0.0, env_overrides={"spawn_mode": "near_base"}, route_roles=[Role.ATTACKER],
         opponents=[EvalOpponent("random", "random", {}), EvalOpponent("stay", "stay", {})],
         held_out=HeldOutConfig(episodes=2, opponents=[], maps=[]),
-        role_swap=RoleSwapConfig(enabled=False, episodes=2, opponents=[], swaps=[], min_change_rate=0.1),
+        role_swap=RoleSwapConfig(enabled=False, episodes=2, opponents=[], swaps=[]),
         policy_check=PolicyCheckConfig(enabled=False, episodes=2, opponents=[]),
     )
     base.update(kw)

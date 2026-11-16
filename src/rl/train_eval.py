@@ -13,6 +13,7 @@ from __future__ import annotations
 import json
 import time
 from pathlib import Path
+from random import Random
 from typing import Any
 
 import torch
@@ -20,7 +21,7 @@ import torch
 from ctf.config import CTFConfig, config_to_dict
 from rl.config import RLConfig
 from rl.eval_config import EvalConfig, PolicyMode, load_eval_config
-from rl.evaluate import evaluate_extras, evaluate_policy
+from rl.evaluate import build_eval_opponent, eval_env_config, evaluate_extras, evaluate_policy, held_out_env_config
 from rl.mappo import ValueNorm
 from rl.networks import ActorCritic
 from rl.rl_strategy import RLStrategy
@@ -69,6 +70,8 @@ def flatten_scalars(results: dict[str, Any], extras: dict[str, Any]) -> dict[str
         out["eval_held_out/mean_win_rate"] = sum(all_wins) / len(all_wins)
     swap = extras.get("role_swap")
     if swap and swap["all"]["rate"] is not None:
+        # Report only: an untrained network already changes most actions when roles are swapped (docs/evaluation.md),
+        # so these curves show that the role input is used, not that roles are specialised well.
         out["eval/role_swap_changed"] = swap["all"]["rate"]
         for pair, stat in swap["pairs"].items():
             out[f"eval/role_swap/{pair}"] = stat["rate"]
@@ -80,10 +83,49 @@ def flatten_scalars(results: dict[str, Any], extras: dict[str, Any]) -> dict[str
     return {k: float(v) for k, v in out.items() if v is not None}
 
 
+def validate_eval_opponents(eval_cfg: EvalConfig, env_config: CTFConfig) -> None:
+    """Build every opponent the evaluation will play once, on the environments it will play on.
+
+    A bad opponent (``source: league``, which an evaluation cannot play; a missing or incompatible checkpoint file;
+    a role-count mismatch; an invalid minimax or scripted parameter; an unreadable held-out map) would otherwise
+    only fail at the first evaluation, hours into a run, and again at every later one. Raises ``ConfigError``
+    naming the opponent. Nothing is played: each opponent is built and dropped.
+    """
+    targets: list[tuple[str, CTFConfig, list]] = []
+    for fixed in (True, False):  # the two spawn styles of the main evaluation differ only in spawn cells
+        targets.append((
+            "main evaluation" + (" (fixed spawns)" if fixed else ""),
+            eval_env_config(env_config, eval_cfg.env_overrides, fixed_spawns=fixed),
+            list(eval_cfg.opponents),
+        ))
+    held = eval_cfg.held_out
+    by_label = {o.label: o for o in eval_cfg.opponents}
+    for m in held.maps:
+        try:
+            map_config = held_out_env_config(env_config, m.path)  # fails on a missing / wrong-sized map file
+        except ConfigError as exc:
+            raise ConfigError(f"noise_free_eval: held-out map {m.label!r}: {exc}") from exc
+        except OSError as exc:
+            raise ConfigError(f"noise_free_eval: held-out map {m.label!r} cannot be read: {exc}") from exc
+        targets.append((f"held-out map {m.label!r}", map_config, [by_label[lab] for lab in held.opponents]))
+    for where, config, opponents in targets:
+        for spec in opponents:
+            try:
+                build_eval_opponent(spec, config, Random(0))
+            except ConfigError as exc:
+                raise ConfigError(f"noise_free_eval: opponent {spec.label!r} (kind {spec.kind}) is invalid for the {where}: {exc}") from exc
+            except Exception as exc:  # noqa: BLE001 - a missing file, a bad checkpoint, anything: stop the run now
+                raise ConfigError(
+                    f"noise_free_eval: opponent {spec.label!r} (kind {spec.kind}) cannot be built for the {where}: "
+                    f"{type(exc).__name__}: {exc}"
+                ) from exc
+
+
 class NoiseFreeEvaluator:
     def __init__(self, cfg: RLConfig, env_config: CTFConfig, run_dir: Path, root: Path | None = None) -> None:
         self.cfg, self.env_config, self.run_dir = cfg, env_config, run_dir
         self.eval_cfg = load_training_eval_config(cfg, root if root is not None else Path.cwd())
+        validate_eval_opponents(self.eval_cfg, env_config)  # fail at startup, not at the first evaluation
 
     def run(
         self, model: ActorCritic, value_norm: ValueNorm, total_steps: int, device: torch.device
@@ -129,6 +171,4 @@ class NoiseFreeEvaluator:
                  f"min {scalars.get('eval/min_win_rate', float('nan')):.2f}"]
         if "eval_held_out/mean_win_rate" in scalars:
             parts.append(f"held-out {scalars['eval_held_out/mean_win_rate']:.2f}")
-        if "eval/role_swap_changed" in scalars:
-            parts.append(f"role-swap {scalars['eval/role_swap_changed']:.2f}")
         return " | ".join(parts) + f" | {scalars['eval/seconds']:.0f}s"

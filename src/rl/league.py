@@ -13,6 +13,19 @@ Two kinds of source for the ``checkpoint`` opponent (``CheckpointParams``):
 Snapshots have the same layout as normal checkpoints minus optimizer and curriculum state, so they
 play in the viewer and in ``rl.evaluate`` like any checkpoint. They cannot be resumed from.
 
+Where the snapshots live (``league.directory``): ``""`` means ``<run>/league``. On Google Colab set it to a
+LOCAL path such as ``/content/league``: every worker lists the folder and stats a file at each episode reset
+and loads snapshots from it, which is slow on the Drive mount (and Drive does not guarantee that the atomic
+rename a snapshot write relies on is atomic). Snapshots are plain files, so they can be copied to Drive
+afterwards and played anywhere. A fresh run refuses a non-empty explicit directory (stale snapshots of
+another run would silently become its opponents); ``--resume`` keeps what is there, and if the local disk was
+lost the league simply starts empty again.
+
+A ``checkpoint`` opponent is EXEMPT from the phase's ``opponent_noise``: that noise exists to make scripted guards
+wander off their flag; a learned policy needs no such help, and random actions would blur what the league measures.
+A checkpoint opponent built for a phase plays with THAT phase's environment (visibility radius, spawns, ...),
+not the one it was trained on; only the grid size and team size must match.
+
 Worker processes load policies on the CPU and keep the newest ones in a small cache
 (``league.cache_size``). Torch is imported only when a checkpoint opponent is actually built.
 """
@@ -40,6 +53,10 @@ _SNAPSHOT_RE = re.compile(r"snapshot_(\d+)\.pt")
 _DRAW_ATTEMPTS = 5  # a snapshot can be pruned between listing the folder and loading it
 
 
+class LeagueEmptyError(ConfigError):
+    """A ``source: league`` opponent was requested but the league has no (loadable) snapshot."""
+
+
 class LeagueSource(str, Enum):
     LEAGUE = "league"
     FILE = "file"
@@ -65,6 +82,11 @@ def parse_params(params: dict[str, Any], where: str = "opponent[checkpoint].para
     elif p.path:
         raise ConfigError(f"{where}: source league takes no path (snapshots come from the run's league folder)")
     return p
+
+
+def resolve_league_dir(cfg: "RLConfig", run_dir: Path) -> Path:
+    """The folder the run's league snapshots live in: ``league.directory``, or ``<run_dir>/league`` when it is empty."""
+    return Path(cfg.league.directory) if cfg.league.directory else Path(run_dir) / "league"
 
 
 def is_league_spec(spec: "OpponentSpec") -> bool:
@@ -95,6 +117,8 @@ def validate_league_settings(cfg: "RLConfig") -> None:
         raise ConfigError("league.snapshot_every_steps and league.keep_snapshots must be >= 0")
     if lg.cache_size < 1:
         raise ConfigError("league.cache_size must be >= 1")
+    if lg.directory != lg.directory.strip():
+        raise ConfigError(f"league.directory must not start or end with spaces, got {lg.directory!r}")
     if league_used and lg.snapshot_every_steps < 1:
         raise ConfigError("a phase has a league opponent but league.snapshot_every_steps is 0: the league would stay empty")
 
@@ -229,7 +253,7 @@ def build_checkpoint_opponent(
         raise ConfigError("source league needs a training run (it plays the run's own snapshots)")
     drawn = league.draw(p.window, rng)
     if drawn is None:
-        raise ConfigError("source league: the league is empty (no snapshots yet)")
+        raise LeagueEmptyError("source league: the league is empty (no snapshots yet)")
     step, model, meta = drawn
     return make_policy_opponent(model, meta, env_config, deterministic=p.deterministic, seed=seed), step
 

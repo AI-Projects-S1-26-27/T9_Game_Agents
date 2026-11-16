@@ -14,7 +14,8 @@ Kinds (selected by ``OpponentSpec.kind`` in the curriculum config):
               ``MinimaxParams``). Slower than the others (about 10 ms per decision at depth 2), so it is
               mainly an evaluation opponent; see docs/minimax.md.
 ``checkpoint`` a frozen trained policy: a snapshot drawn from the run's league (``source: league``) or one
-              fixed checkpoint file (``source: file``); see rl/league.py.
+              fixed checkpoint file (``source: file``); see rl/league.py. It is exempt from the phase's
+              ``opponent_noise`` and plays with the visibility radius of the phase it is built for.
 """
 
 from __future__ import annotations

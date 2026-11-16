@@ -99,3 +99,15 @@ def test_phase_env_overrides_merge_and_validate() -> None:
     with pytest.raises(ConfigError, match="env_overrides"):
         phase_env_config(base, bad, fixed_spawns=False)
     assert config_to_dict(base)["visibility_radius"] == base.visibility_radius
+
+
+# ------------------------------------------------- C1.1: shipped defaults
+
+
+def test_shipped_default_budget_is_five_million_steps_and_keeps_every_checkpoint() -> None:
+    cfg = load_rl_config(ROOT / "configs" / "rl" / "default.yaml")
+    assert cfg.rollout.total_steps == 5_000_000
+    capped = sum(ph.max_steps for ph in cfg.curriculum.phases[:-1])  # phases that can end early or by their step cap
+    assert capped == 2_500_000 and capped < cfg.rollout.total_steps  # the last phase keeps at least half the budget
+    assert cfg.run.keep_checkpoints == 0  # keep all: early checkpoints feed comparisons and the time-lapse
+    assert cfg.league.directory == "" and cfg.league.snapshot_every_steps == 0  # league off, default folder

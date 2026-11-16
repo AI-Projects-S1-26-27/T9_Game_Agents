@@ -215,3 +215,4 @@ league:
   snapshot_every_steps: 0
   keep_snapshots: 0
   cache_size: 4
+  directory: ""

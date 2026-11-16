@@ -105,3 +105,89 @@ def test_spawned_workers_load_and_play_snapshots(tmp_path) -> None:
     finally:
         vec.close()
     assert infos and any(i["snapshot_step"] == 5 and i["opponent"] == "league" for i in infos)
+
+
+# ------------------------------------------------- C1.1: league.directory
+
+
+def test_the_league_folder_defaults_to_the_run_and_can_be_moved(tmp_path) -> None:
+    from rl.league import resolve_league_dir
+
+    cfg = league_config(tmp_path)
+    assert resolve_league_dir(cfg, tmp_path / "run") == tmp_path / "run" / "league"
+    moved = league_config(tmp_path, directory=str(tmp_path / "local"))
+    assert resolve_league_dir(moved, tmp_path / "run") == tmp_path / "local"
+
+
+def test_snapshots_go_to_league_directory_and_are_played_from_there(tmp_path) -> None:
+    local = tmp_path / "local_league"
+    cfg = league_config(
+        tmp_path, opponents=[STAY, league_spec(weight=30.0)], snapshot_every=16, total_steps=800,
+        rollout_length=100, num_envs=2, directory=str(local),
+    )
+    run = tmp_path / "run"
+    trainer, _ = _train(cfg, run)
+    assert trainer.league_dir == local
+    assert [s for s, _ in LeagueStore(local, 1).snapshots()]  # written there ...
+    assert not (run / "league").exists()  # ... and not into the run folder
+    rows = _rows(run)
+    assert any("league/opponent_age_steps" in r for r in rows)  # league games were played from the moved folder
+    # the metric is logged before the same update's snapshot is written, so it can lag by one
+    assert 2 <= rows[-1]["league/num_snapshots"] <= len(LeagueStore(local, 1).snapshots())
+
+
+def test_moved_snapshots_still_play_like_any_checkpoint(tmp_path) -> None:
+    from rl.rl_strategy import RLStrategy
+
+    cfg = league_config(tmp_path, snapshot_every=16, total_steps=32, directory=str(tmp_path / "local"))
+    _train(cfg, tmp_path / "run")
+    path = LeagueStore(tmp_path / "local", 1).snapshots()[-1][1]
+    model, meta = load_policy(path, "cpu")  # what the viewer uses
+    assert meta["config"].league.directory == str(tmp_path / "local")
+    assert RLStrategy.from_checkpoint(path).roles  # what rl.evaluate uses
+
+
+def test_a_new_run_refuses_a_league_directory_that_holds_another_runs_snapshots(tmp_path) -> None:
+    local = tmp_path / "local"
+    cfg = league_config(tmp_path, snapshot_every=16, total_steps=16, directory=str(local))
+    write_snapshot(local, 5, cfg)
+    with pytest.raises(ConfigError, match="already holds snapshots"):
+        Trainer(cfg, env_config_for(cfg), tmp_path / "run")
+    assert [s for s, _ in LeagueStore(local, 1).snapshots()] == [5]  # nothing was touched
+    # an empty or not yet existing folder is fine
+    fresh = league_config(tmp_path, snapshot_every=16, total_steps=16, directory=str(tmp_path / "empty"))
+    Trainer(fresh, env_config_for(fresh), tmp_path / "run2")
+
+
+def test_resuming_keeps_snapshots_in_the_moved_league_directory(tmp_path) -> None:
+    local, run = tmp_path / "local", tmp_path / "run"
+    _train(league_config(tmp_path, snapshot_every=32, total_steps=32, directory=str(local)), run)
+    latest = run / "checkpoints" / "latest.pt"
+    _train(league_config(tmp_path, snapshot_every=32, total_steps=96, directory=str(local)), run, latest)  # not refused
+    assert [s for s, _ in LeagueStore(local, 1).snapshots()] == [32, 64, 96]
+
+
+def test_resuming_after_the_local_league_folder_was_lost_just_starts_with_an_empty_league(tmp_path) -> None:
+    """Colab's local disk is wiped when the runtime restarts; the run must go on, refilling its league."""
+    local, run = tmp_path / "local", tmp_path / "run"
+    _train(league_config(tmp_path, snapshot_every=32, total_steps=32, directory=str(local)), run)
+    import shutil
+
+    shutil.rmtree(local)
+    cfg = league_config(tmp_path, opponents=[STAY, league_spec(weight=30.0)], snapshot_every=32, total_steps=96, directory=str(local))
+    _train(cfg, run, run / "checkpoints" / "latest.pt")
+    assert [s for s, _ in LeagueStore(local, 1).snapshots()] == [64, 96]
+
+
+def test_spawned_workers_play_the_moved_league_folder(tmp_path) -> None:
+    local = tmp_path / "local"
+    cfg = league_config(
+        tmp_path, opponents=[STAY, league_spec(weight=60.0)], snapshot_every=16, total_steps=400,
+        rollout_length=100, num_envs=2, num_workers=2, directory=str(local),
+    )
+    cfg_seed = league_config(tmp_path, opponents=[STAY])
+    trainer = Trainer(cfg, env_config_for(cfg), tmp_path / "run")
+    write_snapshot(local, 1, cfg_seed)  # the workers' folder is the moved one (a fresh run's trainer already checked it empty)
+    trainer.run()
+    rows = _rows(tmp_path / "run")
+    assert any("league/opponent_age_steps" in r for r in rows)

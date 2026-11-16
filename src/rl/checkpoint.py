@@ -110,7 +110,7 @@ SECTION_COMPAT: dict[str, dict[str, Any]] = {
     "noise_free_eval": {
         "enabled": False, "every_steps": 1, "at_end": False, "config_path": "configs/rl/eval_train.yaml", "overrides": {},
     },
-    "league": {"snapshot_every_steps": 0, "keep_snapshots": 0, "cache_size": 4},
+    "league": {"snapshot_every_steps": 0, "keep_snapshots": 0, "cache_size": 4, "directory": ""},
 }
 SCRIPTED_COMPAT: tuple[tuple[str, Any], ...] = (("chase_radius", 0), ("escort", False))
 
@@ -122,6 +122,9 @@ def migrate_config(plain: dict[str, Any]) -> dict[str, Any]:
     cfg = copy.deepcopy(plain)
     for section, default in SECTION_COMPAT.items():
         cfg.setdefault(section, copy.deepcopy(default))
+        if isinstance(cfg[section], dict):  # a section written before one of its later keys existed
+            for key, value in default.items():
+                cfg[section].setdefault(key, copy.deepcopy(value))
     for path, value in CONFIG_COMPAT:
         section, key = path.split(".")
         if isinstance(cfg.get(section), dict):

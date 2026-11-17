@@ -51,6 +51,22 @@ opponents:
   - kind: classical
     label: classical
     params: {roles: [attacker, attacker, defender, scout]}
+  # The same AI with the known problems fixed in src/rl/classical_fixes.py (docs/classical.md lists each fix and its switch).
+  # Every key is spelled out; the numbers are the original literals of src/classical_ai.
+  - kind: classical
+    label: classical_fixed
+    params:
+      roles: [attacker, attacker, defender, scout]
+      remember_dropped_flag: true
+      defend_dropped_flag: true
+      buddy_system: true
+      intercept_in_pairs: true
+      pair_guard_radius: 2
+      pair_wait_steps: 20
+      carrier_danger_radius: 2
+      influence_radius: 3
+      enemy_penalty: 5.0
+      probability_weight: 3.0
   # An LLM opponent has no hookup (it cannot run on Colab): register a factory in
   # rl.evaluate.EXTERNAL_OPPONENTS and add its entry here (docs/evaluation.md explains how).
 

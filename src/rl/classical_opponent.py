@@ -25,6 +25,7 @@ from ctf.actions import Action
 from ctf.agent import Team
 from ctf.config import CTFConfig
 from ctf.observations import TeamObservation
+from rl.classical_fixes import FixedClassicalStrategy, FixSettings
 from rl.schema import ConfigError
 from strategies import BaseStrategy, Role
 
@@ -33,7 +34,47 @@ _PREFIX = {Team.RED: "R", Team.BLUE: "B"}
 
 @dataclass(frozen=True)
 class ClassicalParams:
+    """``roles`` is required. Every other key is optional and its default is the ORIGINAL behaviour (all fixes off,
+    the old literals), so entries and saved configs written before the fixes existed mean exactly what they meant.
+    The ``classical_fixed`` entries in configs/rl/eval.yaml and configs/viz/controllers.yaml spell every key out."""
+
     roles: list[Role]  # role of each team slot, slot 1 first (same meaning as scripted opponents)
+    remember_dropped_flag: bool = False
+    defend_dropped_flag: bool = False
+    buddy_system: bool = False
+    intercept_in_pairs: bool = False
+    pair_guard_radius: int = 2
+    pair_wait_steps: int = 20
+    carrier_danger_radius: int = 2
+    influence_radius: int = 3
+    enemy_penalty: float = 5.0
+    probability_weight: float = 3.0
+
+    def __post_init__(self) -> None:
+        for name in ("pair_guard_radius", "pair_wait_steps", "carrier_danger_radius", "influence_radius"):
+            if getattr(self, name) < 0:
+                raise ConfigError(f"classical params.{name} must be >= 0, got {getattr(self, name)}")
+        for name in ("enemy_penalty", "probability_weight"):
+            if getattr(self, name) < 0:
+                raise ConfigError(f"classical params.{name} must be >= 0, got {getattr(self, name)}")
+
+    def fix_settings(self) -> FixSettings:
+        return FixSettings(
+            remember_dropped_flag=self.remember_dropped_flag,
+            defend_dropped_flag=self.defend_dropped_flag,
+            buddy_system=self.buddy_system,
+            intercept_in_pairs=self.intercept_in_pairs,
+            pair_guard_radius=self.pair_guard_radius,
+            pair_wait_steps=self.pair_wait_steps,
+            carrier_danger_radius=self.carrier_danger_radius,
+            influence_radius=self.influence_radius,
+            enemy_penalty=self.enemy_penalty,
+            probability_weight=self.probability_weight,
+        )
+
+    def is_original(self) -> bool:
+        """True when nothing differs from the verbatim classical code (then that code runs untouched)."""
+        return self == ClassicalParams(roles=self.roles)
 
 
 class ClassicalOpponent(BaseStrategy):
@@ -52,6 +93,7 @@ class ClassicalOpponent(BaseStrategy):
             team: {f"{prefix}{slot}": role.value for slot, role in enumerate(params.roles, start=1)}
             for team, prefix in _PREFIX.items()
         }
+        self._params = params
         self._inner = None
 
     def reset(self) -> None:
@@ -59,5 +101,9 @@ class ClassicalOpponent(BaseStrategy):
 
     def act(self, observation: TeamObservation, team: Team) -> dict[str, Action]:
         if self._inner is None:
-            self._inner = ClassicalStrategy(role_assignments={t: dict(r) for t, r in self._roles.items()})
+            table = {t: dict(r) for t, r in self._roles.items()}
+            if self._params.is_original():
+                self._inner = ClassicalStrategy(role_assignments=table)
+            else:
+                self._inner = FixedClassicalStrategy(table, self._params.fix_settings())
         return self._inner.act(observation, team)

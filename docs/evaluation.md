@@ -124,7 +124,8 @@ run uses the setting of the YAML you pass.
 ## Opponents
 
 `configs/rl/eval.yaml` lists them: random, stay, four scripted variants (leash, parked, chaser, escort), minimax and the
-classical AI (`kind: classical`, roles fixed per slot; see `docs/classical.md` for what it does and does not know).
+classical AI (`kind: classical`, roles fixed per slot; see `docs/classical.md` for what it does and does not know)
+and `classical_fixed`, the same AI with its known problems fixed (switches in `params`).
 Each entry is `{kind, label, params}`; `label` is the name used in reports and in `--opponents`.
 The LLM agent has no hookup (it cannot run on Colab). To evaluate against one, register a factory and add an
 entry with that kind to the eval YAML:

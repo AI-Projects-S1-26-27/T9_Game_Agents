@@ -95,6 +95,8 @@ Opponent kinds (`random`, `stay`, `scripted`, `minimax`, `classical`) are built 
 (`uv run python -m viz play --map configs/ctf_v2.yaml --red scripted --blue minimax`).
 `classical` is the teammate's A* + behaviour-tree team (`src/classical_ai`, copied unchanged from the `classical_ai`
 branch) with fixed roles per slot; it works in the evaluation and the viewer (`--blue classical`), see `docs/classical.md`.
+Demo checklist: `docs/demo.md` (`scripts/demo_prepare.sh` makes the demo map copies and fallback GIFs).
+`classical_fixed` is the same AI with its known problems fixed by switches (dropped flags, headcount rule), also in `docs/classical.md`.
 
 ## Evaluation
 

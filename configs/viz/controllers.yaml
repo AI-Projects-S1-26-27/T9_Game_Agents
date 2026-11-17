@@ -35,6 +35,22 @@ controllers:
     checkpoint: ""
     deterministic: true
     params: {roles: [attacker, attacker, defender, scout]}
+  - label: "Classical AI, fixed (buddy rules, dropped flags)"
+    kind: classical
+    checkpoint: ""
+    deterministic: true
+    params:
+      roles: [attacker, attacker, defender, scout]
+      remember_dropped_flag: true
+      defend_dropped_flag: true
+      buddy_system: true
+      intercept_in_pairs: true
+      pair_guard_radius: 2
+      pair_wait_steps: 20
+      carrier_danger_radius: 2
+      influence_radius: 3
+      enemy_penalty: 5.0
+      probability_weight: 3.0
   - {label: "Random", kind: random, checkpoint: "", deterministic: true, params: {}, roles: [attacker, attacker, defender, scout]}
   - {label: "Stay still", kind: stay, checkpoint: "", deterministic: true, params: {}, roles: [attacker, attacker, defender, scout]}
   - label: "Minimax (alpha-beta, depth 2)"

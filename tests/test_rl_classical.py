@@ -142,7 +142,7 @@ def test_eval_yaml_and_viewer_yaml_list_the_classical_ai() -> None:
     assert isinstance(ev.build_eval_opponent(entry, V2, Random(0)), ClassicalOpponent)
 
     specs = [s for s in load_controller_specs(ROOT / "configs" / "viz" / "controllers.yaml") if s.kind == "classical"]
-    assert len(specs) == 1
+    assert len(specs) == 2  # the original and the fixed variant (tests/test_rl_classical_fixes.py)
     ctrl = ControllerFactory().build(specs[0], V2, 0)
     assert isinstance(ctrl.strategy, ClassicalOpponent) and ctrl.roles == ROLES
 

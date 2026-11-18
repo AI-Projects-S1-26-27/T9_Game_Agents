@@ -1,0 +1,38 @@
+# Settings of scripts/make_readme_assets.py (strict: unknown or missing keys are errors).
+figure:
+  dpi: 150
+  map_cell: 0.34          # inches per map cell in the map gallery
+  map_columns: 4          # panels per row
+  bar_width: 0.26         # width of one bar in the experiment charts
+colors:
+  win: "#2b6cb0"
+  draw: "#8a8f98"
+  loss: "#c9792b"
+  wall: "#4a5568"
+  red: "#e53e3e"
+  blue: "#3182ce"
+  spawn_red: "#fed7d7"
+  spawn_blue: "#bee3f8"
+# Which pool trained which run: the gallery marks a map "seen" when it is in the pool of that recipe.
+maps:
+  directory: configs/maps
+  recipes:
+    - {label: "Run 2 (5 maps)", config: configs/rl/default.yaml}
+    - {label: "Run 3 (all 7 maps)", config: configs/rl/all_maps.yaml}
+# Results of the research report (Experiment A and B, FIXED spawns, depth-2 minimax). They are copied from
+# Figures 6 and 7 of the report; the game logs are not in this repository, so this file is the only record here.
+experiments:
+  - id: A
+    title: "Experiment A: three approaches, 42 fixed-spawn games"
+    games: 28
+    bars:
+      - {label: "Classical AI", win: 7, draw: 4, loss: 17}
+      - {label: "MAPPO (13M)", win: 11, draw: 5, loss: 12}
+      - {label: "LLM commander", win: 17, draw: 5, loss: 6}
+  - id: B
+    title: "Experiment B: MAPPO checkpoints, 70 games per pairing"
+    games: 70
+    bars:
+      - {label: "13M vs Minimax-2", win: 13, draw: 39, loss: 18}
+      - {label: "9M vs Minimax-2", win: 25, draw: 45, loss: 0}
+      - {label: "13M vs 9M", win: 1, draw: 56, loss: 13}

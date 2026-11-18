@@ -51,4 +51,5 @@ Thumbs.db
 rl_*_files.zip
 
 !runs/v2_run2_multimap/
+!runs/v2_run3_allmaps/
 runs/*/checkpoints/

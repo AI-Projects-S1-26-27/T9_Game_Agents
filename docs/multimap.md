@@ -54,3 +54,18 @@ from before this change have empty pools, so only the base layout is seen for th
   distances, env config). The map is drawn in `reset()`; the opponent is built from the drawn map's config.
 * With zero or one map there is NO extra random draw per episode, so seeds of old configs reproduce.
 * `info["map"]` is in the episode summary ("" without a pool).
+
+## Two recipes: `default.yaml` (Run 2) and `all_maps.yaml` (Run 3)
+
+* `configs/rl/default.yaml` is the Run 2 recipe: a five-map pool, with `center_gate` and `long_wall_south` never trained on.
+  `configs/rl/eval_train.yaml` holds those two maps out, so the in-training curve measures transfer.
+* `configs/rl/all_maps.yaml` is the Run 3 recipe (`v2_run3_allmaps`, resumed from the Run 2 checkpoint): the same file plus
+  `center_gate` (weight 1) and `long_wall_south` (weight 2) in the phase-3 pool. Nothing is held out any more, so it uses
+  `configs/rl/eval_train_all_maps.yaml` (no held-out maps). Command used on Colab (from `runs/v2_run3_allmaps/run_info.resume_*.json`,
+  with `--config` pointing at this file instead of `default.yaml`):
+  `python -m rl.train --config configs/rl/all_maps.yaml --resume runs/v2_run2_multimap/checkpoints/latest.pt --set run.name=v2_run3_allmaps --set run.device=cuda --set rollout.total_steps=11000000 --set ppo.learning_rate=0.0001 --set run.keep_checkpoints=0` (plus the Drive output directory and worker settings).
+* The start-up check (`validate_map_pools`) refuses a pool that overlaps the held-out maps of the evaluation file it is given, so
+  the two recipes cannot be mixed by accident (`tests/test_rl_all_maps_config.py`).
+* Evidence note: the saved Run 3 config names `eval_train.yaml`, but the Run 3 evaluation JSONs have no held-out section, so the
+  `eval_train.yaml` that ran on Colab had no held-out maps. That file was not committed, so this is an inference from the JSON.
+  Run 3 numbers on `center_gate` / `long_wall_south` are on maps it trained on, not transfer evidence.

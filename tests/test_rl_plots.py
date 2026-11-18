@@ -47,7 +47,8 @@ def test_held_out_seen_flag_and_the_fallback_for_old_files() -> None:
 
 def test_plot_config_is_strict(tmp_path) -> None:
     cfg = from_dict(plots.PlotCfg, read_yaml(ROOT / "configs" / "plots" / "rl_plots.yaml"))
-    assert cfg.smoothing_window > 0 and len(cfg.colors) >= 2
+    assert cfg.smoothing_window > 0
+    assert len(cfg.colors) >= 7 and len(set(cfg.colors)) == len(cfg.colors)  # the 7-map pool needs 7 distinguishable lines
     text = (ROOT / "configs" / "plots" / "rl_plots.yaml").read_text() + "surprise: 1\n"
     bad = tmp_path / "bad.yaml"
     bad.write_text(text)

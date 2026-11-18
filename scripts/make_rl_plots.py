@@ -102,7 +102,7 @@ def plot_training_curves(runs, cfg: PlotCfg, out: Path) -> Path:
             xs, ys = series(rows, key, cfg.smoothing_window)
             ax.plot([x / 1e6 for x in xs], ys, color=color, label=label, linewidth=1.6)
     axes[0].set_ylabel("training win rate")
-    axes[0].set_ylim(0, 1.02)
+    axes[0].set_ylim(-0.03, 1.03)
     axes[1].set_ylabel("policy entropy")
     axes[1].set_xlabel("environment steps (millions)")
     axes[0].set_title(f"Training curves (rolling mean over {cfg.smoothing_window} updates)")
@@ -132,7 +132,7 @@ def plot_training_per_map(runs, cfg: PlotCfg, out: Path) -> Path | None:
         for i, key in enumerate(keys):
             xs, ys = series(rows, key, cfg.smoothing_window)
             ax.plot([x / 1e6 for x in xs], ys, color=cfg.colors[i % len(cfg.colors)], label=key[len(prefix):], linewidth=1.5)
-        ax.set_ylim(0, 1.02)
+        ax.set_ylim(-0.03, 1.03)
         ax.set_ylabel("training win rate")
         ax.set_title(f"{label}: win rate per training map")
         ax.grid(alpha=0.3)

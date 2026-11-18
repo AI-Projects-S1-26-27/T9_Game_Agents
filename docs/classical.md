@@ -66,10 +66,17 @@ is the number to quote.
 | scripted_escort | 27/0/13 | 29/2/9 |
 | minimax depth 2 | 11/3/26 | 31/8/1 |
 
-Why `stay` and `scripted_parked` drew so often: with `near_base` spawns one of the four agents of a team lands on its
-own flag cell in 4 of 21 games (19%), and under the headcount rule such an agent tags every LONE carrier that picks up
-the flag. Only two agents entering together get in. That is the same share as the 15-22% draws of the RL policy
-against `stay` (the RL side of this is not yet checked game by game).
+Why `stay` and `scripted_parked` drew so often for the ORIGINAL classical team: with `near_base` spawns one of the four
+agents of a team lands on its own flag cell in 4 of 21 games (19%), and under the headcount rule such an agent tags
+every LONE carrier that picks up the flag. Only two agents entering together get in. The original team drew 8 of 40
+games against `stay`, the fixed one 1 of 40. (This is a reading of the numbers, not a traced cause for every game.)
+
+The same mechanism is NOT the whole story for the RL policy's draws against `stay`. Two draws were traced (viewer
+maps with `near_base`, 9.0M checkpoint, RED = RL): on `open_field` seed 3 a stationary blue agent starts on its own
+flag cell; on `default` seed 2 no agent starts there, but both RL attackers pick up the flag and then walk, one after
+the other and without an escort, onto the cell (7,3) where a stationary blue agent stands, and are tagged there
+(1 enemy against 0 friendly non-carriers). After that the two RL agents left at home never attack. A third draw
+(`open_field` seed 2) was not traced.
 
 Cost of the fixes: the pair rules add a few path searches per decision (the whole smoke above, 480 games, ran in
 about 60 s including minimax).

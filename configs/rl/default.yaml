@@ -149,6 +149,8 @@ curriculum:
         - {path: configs/maps/open_field.yaml, label: open_field, weight: 1.0}
         - {path: configs/maps/pillars.yaml, label: pillars, weight: 1.0}
         - {path: configs/maps/two_corridors.yaml, label: two_corridors, weight: 1.0}
+        - {path: configs/maps/center_gate.yaml, label: center_gate, weight: 1.0}
+        - {path: configs/maps/long_wall_south.yaml, label: long_wall_south, weight: 2.0}
       opponents:
         - kind: scripted
           label: scripted_leash

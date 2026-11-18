@@ -8,6 +8,8 @@
 Writes (only the ones whose inputs were given):
   training_curves.png     rolling win rate and policy entropy of every --run against the environment steps
   training_per_map.png    rolling training win rate per map of every --run that trained on a map pool
+  training_single_vs_multimap.png  (with --single and --multi) single-map training next to multi-map training: the win
+                          rate of what each run trains on, and the win rate on the default map only (the one map all runs share)
   eval_by_opponent.png    evaluation win rate (with Wilson 95% interval) per opponent, one bar per --eval
   eval_held_out_maps.png  evaluation win rate per held-out map; hatched = the policy never trained on that layout
 Settings (sizes, smoothing, colours) are in configs/plots/rl_plots.yaml.
@@ -111,6 +113,59 @@ def plot_training_curves(runs, cfg: PlotCfg, out: Path) -> Path:
         ax.legend(loc="best")
     fig.tight_layout()
     path = out / "training_curves.png"
+    fig.savefig(path, dpi=cfg.figure.dpi)
+    plt.close(fig)
+    return path
+
+
+DEFAULT_MAP_KEY = "episode/win_rate/map_default"
+
+
+def single_vs_multi_series(single, multi, window: int) -> dict[str, list[tuple[str, list[float], list[float], bool]]]:
+    """panel -> [(label, steps, rolling win rate, is_multi)].
+
+    "trained" panel: the overall training win rate of every run (a single-map run only plays its one map; a multi-map run
+    averages over its pool). "default" panel: the win rate on the default map alone. A single-map run has no per-map
+    metrics because every one of its episodes is on that map, so its overall win rate is the default-map win rate.
+    """
+    out: dict[str, list] = {"trained": [], "default": []}
+    for label, path in single:
+        xs, ys = series(read_metrics(path), "episode/win_rate", window)
+        out["trained"].append((label, xs, ys, False))
+        out["default"].append((label, xs, ys, False))
+    for label, path in multi:
+        rows = read_metrics(path)
+        if not any(DEFAULT_MAP_KEY in r for r in rows):
+            raise SystemExit(f"{path}/metrics.jsonl has no {DEFAULT_MAP_KEY}: it is not a multi-map run")
+        xs, ys = series(rows, "episode/win_rate", window)
+        out["trained"].append((label, xs, ys, True))
+        xs, ys = series(rows, DEFAULT_MAP_KEY, window)
+        out["default"].append((label, xs, ys, True))
+    return out
+
+
+def plot_single_vs_multi(single, multi, cfg: PlotCfg, out: Path) -> Path:
+    data = single_vs_multi_series(single, multi, cfg.smoothing_window)
+    fig, axes = plt.subplots(2, 1, figsize=(cfg.figure.curve_width, 2 * cfg.figure.curve_height), sharex=True)
+    titles = {
+        "trained": "Win rate on the maps each run trains on (single map: one layout; multi-map: the pool average)",
+        "default": "Win rate on the default map only (same map and opponents for every run)",
+    }
+    for ax, panel in zip(axes, ("trained", "default")):
+        for i, (label, xs, ys, is_multi) in enumerate(data[panel]):
+            ax.plot([x / 1e6 for x in xs], ys, color=cfg.colors[i % len(cfg.colors)], label=label, linewidth=1.6,
+                    linestyle="-" if is_multi else "--")
+        for _, xs, _, is_multi in data[panel]:
+            if is_multi and xs:  # where this run was branched from the run before it
+                ax.axvline(xs[0] / 1e6, color="gray", linestyle=":", linewidth=1)
+        ax.set_ylim(-0.03, 1.03)
+        ax.set_ylabel("training win rate")
+        ax.set_title(titles[panel], fontsize=10)
+        ax.grid(alpha=0.3)
+        ax.legend(loc="lower right")
+    axes[-1].set_xlabel("environment steps (millions); dotted lines: a multi-map run resumes from the run before it")
+    fig.tight_layout()
+    path = out / "training_single_vs_multimap.png"
     fig.savefig(path, dpi=cfg.figure.dpi)
     plt.close(fig)
     return path
@@ -234,6 +289,8 @@ def main(argv: list[str] | None = None) -> int:
     p = argparse.ArgumentParser(description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter)
     p.add_argument("--config", default=str(ROOT / "configs" / "plots" / "rl_plots.yaml"))
     p.add_argument("--run", action="append", default=[], metavar="LABEL=RUN_DIR", help="a training run folder (metrics.jsonl)")
+    p.add_argument("--single", action="append", default=[], metavar="LABEL=RUN_DIR", help="a single-map training run")
+    p.add_argument("--multi", action="append", default=[], metavar="LABEL=RUN_DIR", help="a multi-map training run (has per-map metrics)")
     p.add_argument("--eval", action="append", default=[], metavar="LABEL=FILE.json", help="an rl.evaluate JSON")
     p.add_argument("--out", default="outputs/plots")
     args = p.parse_args(argv)
@@ -243,6 +300,10 @@ def main(argv: list[str] | None = None) -> int:
     runs = [split_arg(r) for r in args.run]
     evals = [split_arg(e) for e in args.eval]
     made = []
+    if args.single or args.multi:
+        if not (args.single and args.multi):
+            raise SystemExit("--single and --multi go together: one single-map run and at least one multi-map run")
+        made.append(plot_single_vs_multi([split_arg(r) for r in args.single], [split_arg(r) for r in args.multi], cfg, out))
     if runs:
         made.append(plot_training_curves(runs, cfg, out))
         made.append(plot_training_per_map(runs, cfg, out))

@@ -80,3 +80,31 @@ def test_main_writes_all_four_pictures(tmp_path) -> None:
     out2 = tmp_path / "plots2"
     plots.main(["--run", f"R={run}", "--out", str(out2)])
     assert (out2 / "training_curves.png").exists() and not (out2 / "training_per_map.png").exists()
+
+
+def _write_run(path, rows) -> None:
+    path.mkdir(parents=True, exist_ok=True)
+    (path / "metrics.jsonl").write_text("\n".join(json.dumps(r) for r in rows))
+
+
+def test_single_vs_multi_uses_the_default_map_series_for_the_multi_map_run(tmp_path) -> None:
+    single, multi = tmp_path / "single", tmp_path / "multi"
+    _write_run(single, [{"step": 100 * i, "episode/win_rate": 0.9} for i in range(1, 8)])
+    _write_run(multi, [{"step": 1000 + 100 * i, "episode/win_rate": 0.5, "episode/win_rate/map_default": 0.8} for i in range(1, 8)])
+    data = plots.single_vs_multi_series([("S", str(single))], [("M", str(multi))], window=1)
+    by_panel = {panel: {label: ys for label, _, ys, _ in rows} for panel, rows in data.items()}
+    assert by_panel["trained"]["M"] == [0.5] * 7  # the pool average
+    assert by_panel["default"]["M"] == [0.8] * 7  # the default map alone: not the pool average
+    assert by_panel["default"]["S"] == by_panel["trained"]["S"] == [0.9] * 7  # one map: both views agree
+    out = tmp_path / "plots"
+    assert plots.main(["--single", f"S={single}", "--multi", f"M={multi}", "--out", str(out)]) == 0
+    assert (out / "training_single_vs_multimap.png").stat().st_size > 1000
+
+
+def test_single_vs_multi_refuses_a_run_that_is_not_multi_map_and_a_lone_flag(tmp_path) -> None:
+    run = tmp_path / "run"
+    _write_run(run, [{"step": i, "episode/win_rate": 0.5} for i in range(5)])
+    with pytest.raises(SystemExit, match="not a multi-map run"):
+        plots.single_vs_multi_series([("S", str(run))], [("M", str(run))], window=1)
+    with pytest.raises(SystemExit, match="go together"):
+        plots.main(["--single", f"S={run}", "--out", str(tmp_path / "x")])

@@ -38,9 +38,9 @@ def make_opponent(name: str, env_config, seed: int = 0, rl_checkpoint: str | Non
     if name not in ALL_OPPONENTS:
         raise ValueError(f"unknown opponent '{name}'; choose from {', '.join(ALL_OPPONENTS)}")
     if name == "classical":
-        from classical_ai.classical_strategy import ClassicalStrategy
+        from .team import make_classical
 
-        return ClassicalStrategy()
+        return make_classical(env_config)
     if name == "rl":
         from .rl_adapter import make_rl_strategy
 

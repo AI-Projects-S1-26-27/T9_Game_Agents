@@ -53,7 +53,7 @@ so any of them can play any other, in the evaluation harness and in the viewer.
 
 | | Approach | Where | Idea |
 |---|---|---|---|
-| 1 | **Classical AI** | `src/classical_ai/` | A* path finding, an influence map of enemy danger, a small behaviour tree and one controller per role. Hand-written, no learning. Wrapped by `src/rl/classical_opponent.py` ([docs/classical.md](docs/classical.md)). |
+| 1 | **Classical AI** | `src/classical_ai/` | A* path finding, an influence map of enemy danger, a small behaviour tree and one controller per role. Hand-written, no learning. The v2 layer (fixed roles, dropped flags, pair rules) is `src/classical_ai/v2.py` ([docs/classical.md](docs/classical.md)). |
 | 2 | **RL: MAPPO with a CNN** | `src/rl/` | A CNN actor-critic with role-conditioned heads, trained with multi-agent PPO and a centralised critic. One network plays all four agents on either side. |
 | 3 | **LLM commander** | `src/strategies/llm_commander/` | An LLM acts as a coach: every few turns it reads what the team knows and gives short orders ("attacker, capture the flag"). A low-level controller turns orders into moves; illegal orders are rejected before they reach the agents. Works with any provider (OpenAI-style, Anthropic, Gemini, local models) or an offline mock ([docs/llm_commander.md](docs/llm_commander.md)). |
 
@@ -211,7 +211,7 @@ What the viewer can do (press **H** in the window for every key; looks and keys 
 | Feature | How |
 |---|---|
 | Live play, any controller on either side | `python -m viz play --checkpoint <pt> --red RL --blue Minimax` (`F1`/`F2` cycle the controllers, `w` swaps sides, `return` new seed) |
-| Controllers | RL checkpoint, random, stay, scripted variants, minimax, classical AI (original and `classical_fixed`), listed in `configs/viz/controllers.yaml` |
+| Controllers | RL checkpoint, random, stay, scripted variants, minimax, classical AI (original and `classical_fixed`), LLM commander (mock model or a real provider, see [docs/llm_commander.md](docs/llm_commander.md)), listed in `configs/viz/controllers.yaml` |
 | Fog and vision | `f` fog, `v` vision, `tab` view as RED / BLUE / everyone |
 | Replays and exports | `viz record`, `viz replay`, `viz export` to GIF, MP4 or PNG |
 | Map maker | `python -m viz mapmaker --map configs/maps/default.yaml`: paint walls, bases and spawns, with a mirror mode that keeps maps symmetric |
@@ -282,7 +282,7 @@ This calls `scripts/make_rl_plots.py` (training curves, per-opponent and per-map
 src/ctf/                 environment: rules, observations, config (strict YAML)
 src/coordination/        shared team belief map (scout line-of-sight sharing)
 src/strategies/          BaseStrategy interface, roles, the LLM commander (llm_commander/)
-src/classical_ai/        approach 1, copied unchanged from the classical_ai branch
+src/classical_ai/        approach 1: the original modules (classical_ai branch) plus v2.py, the layer for the 4-agent rules
 src/rl/                  approach 2: MAPPO, features, rewards, curriculum, evaluation, minimax, league, map pools
 src/viz/                 the viewer, map maker, GIF/MP4 export, time-lapse, training report
 configs/                 default.yaml, ctf_v2.yaml (rules), maps/, rl/ (training + evaluation), viz/, plots/

@@ -75,7 +75,7 @@ Learning over training time, as a video (Run 1 has two checkpoints in the repo: 
 * Unseen maps: `center_gate` about half, `long_wall_south` 0%. The other four maps are training maps, so they are not transfer evidence.
 * Draws against `stay`/parked teams: traced in two games so far, see `docs/classical.md` (a stationary agent on its flag cell, or a stationary agent on the carrier's path, tags a lone carrier). A third traced cause may exist.
 * The scout often stands still; scout sharing is a game rule (the team view is the union of all agents' views), not a tested hypothesis.
-* No LLM commander on this branch.
+* The LLM commander is available as a viewer controller (`--red "LLM commander (mock model, simple"`), but the shipped entries use the mock model (an offline plumbing test, not a result of the study).
 
 ## 6. Viva: the multi-map design in four lines
 

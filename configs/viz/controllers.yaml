@@ -1,10 +1,17 @@
 # Controllers the live viewer can put on the RED / BLUE side (cycle with F1 / F2).
-# kind: rl | random | stay | scripted | minimax | classical. Every key is required for every entry (roles only for random / stay).
+# kind: rl | random | stay | scripted | minimax | classical | llm. Every key is required for every entry (roles only for random / stay).
 #   rl        needs `checkpoint` (a .pt file); `deterministic: false` samples actions instead of argmax
 #   scripted  `params` as in configs/rl/default.yaml (roles, guard_mode, guard_leash, scout_behavior, chase_radius, escort)
 #   minimax   alpha-beta search opponent (docs/minimax.md); `params` as below, `roles` is display only like random/stay
 #   classical the teammate's classical AI (A* + influence map + behaviour tree, src/classical_ai); `params.roles` fixes the
 #             role of each slot (they drive its behaviour, like scripted); `roles` stays empty
+#   llm       the LLM commander (docs/llm_commander.md): an LLM gives short orders every few turns, a controller executes them.
+#             `params` (all optional): condition (llm | llm_classical | llm_rl | ablations; "llm@3" = ask every 3 turns),
+#             provider (mock = offline stand-in with a few fixed rules, NOT a result; or openai, anthropic, gemini, groq,
+#             ollama, custom, auto), model, rpm, cache (file with every answer, so a game can be replayed without the
+#             service), every_k_turns, rl_checkpoint (llm_rl only), log_path. A real provider needs its API key (see
+#             scripts/setup_llm.py); the model is asked during play, so a step can take a moment. Roles follow the map's
+#             carrier slots (`roles` stays empty).
 #   random, stay  `roles`: the role label shown on each team slot (display only, it does not change how
 #                 they move). Scripted teams take their roles from `params`, RL teams from the checkpoint.
 #                 The list needs one entry per agent on the map.
@@ -66,3 +73,15 @@ controllers:
       max_nodes: 4000
       alpha_beta: true
       weights: {win: 1000.0, carry_progress: 4.0, pickup: 20.0, approach: 1.0, approach_others: 0.5, escort: 2.0, enemy_carry_progress: 4.0, enemy_pickup: 20.0, defend: 1.0, alive: 3.0, pressure: 1.5}
+  - label: "LLM commander (mock model, simple controller)"
+    kind: llm
+    checkpoint: ""
+    deterministic: true
+    params: {condition: llm, provider: mock, model: "", rpm: 10.0, cache: "", every_k_turns: 5, rl_checkpoint: "", log_path: ""}
+  - label: "LLM commander (mock model, classical controller)"
+    kind: llm
+    checkpoint: ""
+    deterministic: true
+    params: {condition: llm_classical, provider: mock, model: "", rpm: 10.0, cache: "", every_k_turns: 5, rl_checkpoint: "", log_path: ""}
+  # A real model: copy an entry above and set provider (and model) to your service, e.g. `provider: gemini` after
+  # `uv run python scripts/setup_llm.py`. `cache: outputs/llm_cache.json` keeps the answers for a replay without the service.

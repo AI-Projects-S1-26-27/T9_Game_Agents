@@ -23,6 +23,30 @@ pathfinding and evaluator):
 The RL agent is trained on the v2 rules (4 agents per team, `configs/ctf_v2.yaml`), so every game with it needs
 `--config configs/ctf_v2.yaml`. The commander's prompt, roles and controller follow the rules of the config in use.
 
+## In the viewer and the evaluation harness (opponent kind `llm`)
+
+The commander is an ordinary team of the opponent registry (`src/strategies/llm_commander/team.py`), so it can play any
+other controller in the viewer and in `rl.evaluate`:
+
+    uv run python -m viz play --map configs/ctf_v2.yaml --red "LLM commander (mock model, classical" --blue "Classical AI, fixed"
+    uv run python -m viz play --map configs/ctf_v2.yaml --checkpoint $CK --red RL --blue "LLM commander (mock model, simple"
+    uv run python -m viz record --red "LLM commander" --blue Minimax --seed 3 --mp4 outputs/viz/llm_vs_minimax.mp4
+
+The entries are in `configs/viz/controllers.yaml` (`F1`/`F2` cycle through them in the window). `params` of kind `llm`
+(strict YAML, all optional): `condition` (`llm`, `llm_classical`, `llm_rl`, the ablations; `llm@3` = ask every 3 turns),
+`provider` (`mock`, or a provider name as in the section below), `model`, `rpm`, `cache`, `every_k_turns`, `rl_checkpoint`
+(for `llm_rl`), `log_path`. The shipped entries use the **mock model**, an offline stand-in with a few fixed rules: it is a
+plumbing test, not a result of the study. For a real model copy an entry and set `provider` (and `model`); a missing key or
+unknown provider is shown as a controller error, not a crash. The model is asked while the game is played, so with a real
+provider a step can take a moment; set `cache: <file>` once and the same game replays later without the service.
+In `rl.evaluate` the same `{kind: llm, label, params}` entry can go into the `opponents` list of the evaluation YAML.
+It is not meant as a training opponent (every game would call the model).
+
+Roles follow the map: attackers in the carrier slots, then one defender, the rest scouts (4 agents: attacker, attacker,
+defender, scout). The `classical` baseline of this package (`--condition classical`, `--opponent classical`) uses these fixed
+roles on the v2 rules; the classical coordinator's own default assigns roles by position among the agents still active,
+which is wrong for 4 agents. On the original rules (3 agents) it is the plain `ClassicalStrategy` as before.
+
 ## LLM provider
 Any service can be used. The API key is read from an environment variable and is never written to a file or log.
 

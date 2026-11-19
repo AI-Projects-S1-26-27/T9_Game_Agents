@@ -127,12 +127,17 @@ run uses the setting of the YAML you pass.
 classical AI (`kind: classical`, roles fixed per slot; see `docs/classical.md` for what it does and does not know)
 and `classical_fixed`, the same AI with its known problems fixed (switches in `params`).
 Each entry is `{kind, label, params}`; `label` is the name used in reports and in `--opponents`.
-The LLM agent has no hookup (it cannot run on Colab). To evaluate against one, register a factory and add an
-entry with that kind to the eval YAML:
+The LLM commander is the built-in kind `llm` (params in `docs/llm_commander.md`). It is not in the default list: the shipped
+model is the offline mock, which is a plumbing test and not a result, and a real provider needs its API key and network
+access (so it will not run on Colab without them). To evaluate against it add
+`- {kind: llm, label: llm, params: {condition: llm, provider: <your provider>, model: <model>}}` to the eval YAML; `cache:`
+stores the answers so the same games can be repeated without the service.
+
+Any other outside opponent can be registered as a factory and listed by its own kind:
 
 ```python
 from rl.evaluate import EXTERNAL_OPPONENTS
-EXTERNAL_OPPONENTS["llm"] = lambda spec, env_config, rng: MyLLMStrategy(env_config, **spec.params)
+EXTERNAL_OPPONENTS["human"] = lambda spec, env_config, rng: MyStrategy(env_config, **spec.params)
 ```
 
 The factory returns any `BaseStrategy`. An unregistered, non-built-in kind is a clear `ConfigError`.

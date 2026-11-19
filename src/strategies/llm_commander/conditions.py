@@ -49,9 +49,9 @@ def build_condition(spec: str, *, llm, max_steps: int, seed: int = 0, default_k:
     name, k = parse_condition(spec)
     k = k or default_k
     if name == "classical":
-        from classical_ai.classical_strategy import ClassicalStrategy
+        from .team import make_classical
 
-        return ClassicalStrategy()
+        return make_classical(config)
     if name == "rl":
         from .rl_adapter import make_rl_strategy
 

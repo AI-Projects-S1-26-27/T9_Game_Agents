@@ -51,7 +51,7 @@ opponents:
   - kind: classical
     label: classical
     params: {roles: [attacker, attacker, defender, scout]}
-  # The same AI with the known problems fixed in src/rl/classical_fixes.py (docs/classical.md lists each fix and its switch).
+  # The same AI with the known problems fixed in src/classical_ai/v2.py (docs/classical.md lists each fix and its switch).
   # Every key is spelled out; the numbers are the original literals of src/classical_ai.
   - kind: classical
     label: classical_fixed
@@ -67,8 +67,10 @@ opponents:
       influence_radius: 3
       enemy_penalty: 5.0
       probability_weight: 3.0
-  # An LLM opponent has no hookup (it cannot run on Colab): register a factory in
-  # rl.evaluate.EXTERNAL_OPPONENTS and add its entry here (docs/evaluation.md explains how).
+  # The LLM commander is the built-in kind `llm` (docs/llm_commander.md). It is not listed here: the shipped model is the
+  # offline mock (not a result) and a real provider needs a key and network. To add it:
+  #   - {kind: llm, label: llm, params: {condition: llm, provider: <name>, model: <model>}}
+  # Other outside opponents: register a factory in rl.evaluate.EXTERNAL_OPPONENTS (docs/evaluation.md).
 
 # --- extra checks -----------------------------------------------------------------------------
 # Held-out maps: other 11x7 layouts (configs/maps) the policy was never trained on (training uses the

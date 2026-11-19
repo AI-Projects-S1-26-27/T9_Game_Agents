@@ -78,7 +78,11 @@ class ControllerFactory:
             return self._build_rl(spec, env_config, seed)
         rng = Random(seed)
         strategy = build_opponent(OpponentSpec(spec.kind, spec.kind, 1.0, spec.params), env_config, rng)
-        if spec.kind in ("scripted", "classical"):  # their roles are real settings, not display labels
+        if spec.kind == "llm":  # the commander's roles come from the flag rules of the map (carrier slots)
+            from strategies.llm_commander.team import slot_roles
+
+            roles = slot_roles(env_config)
+        elif spec.kind in ("scripted", "classical"):  # their roles are real settings, not display labels
             params = from_dict(ScriptedParams if spec.kind == "scripted" else ClassicalParams, spec.params)
             roles = [r.value for r in params.roles]
         elif spec.roles:

@@ -15,6 +15,9 @@ Kinds (selected by ``OpponentSpec.kind`` in the curriculum config):
               mainly an evaluation opponent; see docs/minimax.md.
 ``classical`` the teammate's classical AI (A* + influence map + behaviour tree, ``src/classical_ai``) with fixed roles
               from ``params.roles``; see rl/classical_opponent.py. Mainly an evaluation / viewer opponent.
+``llm``       the LLM commander (orders from an LLM, executed by a low-level controller), mock model or a real provider;
+              params in ``strategies.llm_commander.team.LLMTeamParams``, see docs/llm_commander.md. An evaluation / viewer
+              opponent, not meant for training (every game calls the model).
 ``checkpoint`` a frozen trained policy: a snapshot drawn from the run's league (``source: league``) or one
               fixed checkpoint file (``source: file``); see rl/league.py. It is exempt from the phase's
               ``opponent_noise`` and plays with the visibility radius of the phase it is built for.
@@ -39,7 +42,7 @@ from rl.navigation import MOVES, GridNav
 from rl.schema import ConfigError, from_dict
 from strategies import BaseStrategy, Role, StayStrategy
 
-KNOWN_KINDS = ("random", "stay", "scripted", "minimax", "classical", "checkpoint")
+KNOWN_KINDS = ("random", "stay", "scripted", "minimax", "classical", "llm", "checkpoint")
 
 
 class GuardMode(str, Enum):
@@ -208,6 +211,10 @@ def build_opponent(
         return MinimaxStrategy(env_config, from_dict(MinimaxParams, spec.params, f"opponent[{spec.kind}].params"), rng)
     if spec.kind == "classical":
         return ClassicalOpponent(env_config, from_dict(ClassicalParams, spec.params, f"opponent[{spec.kind}].params"))
+    if spec.kind == "llm":
+        from strategies.llm_commander.team import LLMTeamParams, build_llm_team
+
+        return build_llm_team(env_config, from_dict(LLMTeamParams, spec.params, f"opponent[{spec.kind}].params"), rng)
     if spec.kind == "checkpoint":
         return build_checkpoint_opponent(spec.params, env_config, rng, league)[0]
     if spec.params:

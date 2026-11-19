@@ -1,13 +1,16 @@
 # Classical AI opponent
 
-`src/classical_ai/` is a **verbatim copy** of the `classical_ai` branch (A* path finding, an influence map of enemy
-danger, a small behaviour tree, one controller per role). It is not edited on this branch: when the classical teammate
-changes it, copy the files again (`git checkout origin/classical_ai -- src/classical_ai`, then delete any `__pycache__`).
-`src/rl/classical_opponent.py` (adapter) and `src/rl/classical_fixes.py` (the fixes) are the only code of ours around it.
+`src/classical_ai/` holds the classical approach: A* path finding, an influence map of enemy danger, a small behaviour tree
+and one controller per role. The original modules (`behavior_tree.py`, `roles/`, `coordinator.py`, `influence_map.py`,
+`pathfinding.py`, `intents.py`) were written for the original game (3 agents, any enemy tags, a tagged carrier's flag goes
+home) and are unchanged. **`src/classical_ai/v2.py` is the v2 layer** for the 4-agent rules (carrier slots, headcount tagging,
+flags that stay where they drop): it subclasses the original roles and coordinator, so changes to the original modules and
+to the v2 layer do not conflict. `src/rl/classical_opponent.py` and `src/rl/classical_fixes.py` only re-export it so that
+`rl.opponents`, the viewer and old imports keep working.
 
-## What the adapter adds
+## What the v2 layer adds
 
-| Problem in the classical code | What `ClassicalOpponent` does |
+| Problem in the original classical code | What `ClassicalOpponent` (`classical_ai/v2.py`) does |
 |---|---|
 | Default roles are positional over the agents that are still ACTIVE (first = attacker, second = defender, the rest scouts). Wrong for v2 and they shift when an agent is tagged. | Always passes a fixed `{agent id: role}` table built from `params.roles` (slot 1 first). |
 | `ClassicalStrategy` keeps its coordinator (shared belief map) for as long as the object lives. | `reset()` drops it, so every episode starts with an empty belief map. |
@@ -32,10 +35,10 @@ Cost: about 0.5 ms per team decision (measured on one sandbox CPU core); minimax
 
 ## The fixes (`classical_fixed`)
 
-`src/classical_ai/` stays a verbatim copy. The known problems are fixed in `src/rl/classical_fixes.py`, which
-subclasses the teammate's roles and coordinator, so re-copying the branch never conflicts. Every fix has its own
+The known problems are fixed in `src/classical_ai/v2.py`, which
+subclasses the original roles and coordinator. Every fix has its own
 key in `params` (all optional; the defaults are the ORIGINAL behaviour, and with every key at its default the
-verbatim code runs, so the old `classical` numbers stay comparable). `configs/rl/eval.yaml` and
+unmodified original code runs, so the old `classical` numbers stay comparable). `configs/rl/eval.yaml` and
 `configs/viz/controllers.yaml` have a second entry, `classical_fixed`, that spells every key out.
 
 | Problem in the classical code | Key | What the fix does |
@@ -86,7 +89,8 @@ about 60 s including minimax).
 * The behaviour tree has no concept of roles beyond the fixed table and no plan for guarding the flag against a team
   that enters in pairs (the defender sits on its flag).
 * Nothing is learned: it cannot adapt to an opponent.
-* The fixes were written for the v2 rules (carrier slots, headcount, drop on tag); on the legacy 3-agent rules
-  (`configs/default.yaml`) they were not tested.
+* The fixes were written for the v2 rules (carrier slots, headcount, drop on tag). On the legacy 3-agent rules
+  (`configs/default.yaml`) the team runs without errors (`tests/test_classical_v2.py`) but is not tuned for them: in a
+  20-game check (10 seeds x both sides) it drew all 20 games against `stay` and won 14 to 15 of 20 against `random`.
 
 No claim is made that this is the best the classical approach can do.

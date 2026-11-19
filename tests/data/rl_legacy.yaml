@@ -1,0 +1,221 @@
+# Unit-test fixture: the RL config as it was before the v2 rules (3 agents per team, original rules).
+# The mechanics tests use it with configs/default.yaml; tests/test_rl_v2_defaults.py covers the real default.
+run:
+  name: mappo_default
+  output_dir: runs
+  seed: 0
+  device: cpu
+  torch_threads: 2
+  checkpoint_every_steps: 500000
+  keep_checkpoints: 5
+  log_every_updates: 1
+  tensorboard: true
+env:
+  config_path: configs/default.yaml
+roles:
+  slots:
+  - attacker
+  - defender
+  - scout
+features:
+  mirror_blue: true
+  staleness_horizon: 50
+rewards:
+  win: 10.0
+  loss: -10.0
+  timeout: -1.0
+  pickup: 2.0
+  tagged_while_carrying: -2.0
+  tag_enemy_carrier: 2.0
+  tag_team_share: 0.5
+  attacker_potential: 0.05
+  attacker_carry_potential: 0.2
+  carry_step_penalty: -0.02
+  defender_potential: 0.02
+  scout_new_cell: 0.05
+  scout_anneal_steps: 3000000
+  step_penalty: -0.002
+  scout_floor_fraction: 0.0
+  outcome_share_attacker: 1.0
+  outcome_share_defender: 1.0
+  outcome_share_scout: 1.0
+  escort_bonus: 0.0
+  escort_radius: 0
+  escort_roles: []
+  defender_intercept_potential: 0.0
+model:
+  conv_channels:
+  - 16
+  - 16
+  kernel_size: 3
+  hidden_size: 128
+ppo:
+  learning_rate: 0.0003
+  learning_rate_final: 3.0e-05
+  gamma: 0.99
+  gae_lambda: 0.95
+  clip_epsilon: 0.2
+  entropy_coef: 0.01
+  entropy_coef_final: 0.003
+  value_coef: 0.5
+  max_grad_norm: 0.5
+  epochs: 4
+  num_minibatches: 4
+  adam_eps: 1.0e-05
+  normalize_advantages: true
+  value_normalization: true
+rollout:
+  num_envs: 16
+  num_workers: 4
+  rollout_length: 128
+  total_steps: 10000000
+curriculum:
+  learner_side: random
+  phases:
+  - name: learn_the_task
+    max_steps: 1500000
+    advance_win_rate: 0.7
+    window_episodes: 200
+    fixed_spawn_fraction: 0.0
+    opponent_noise: 0.0
+    env_overrides:
+      visibility_radius: 20
+      spawn_mode: shuffle
+      red_spawns:
+      - - 0
+        - 0
+      - - 0
+        - 6
+      - - 2
+        - 0
+      blue_spawns:
+      - - 10
+        - 0
+      - - 10
+        - 6
+      - - 8
+        - 0
+    maps: []
+    opponents:
+    - kind: stay
+      weight: 1.0
+      params: {}
+      label: stay
+    - kind: random
+      weight: 1.0
+      params: {}
+      label: random
+  - name: handle_defenders
+    max_steps: 3000000
+    advance_win_rate: 0.7
+    window_episodes: 200
+    fixed_spawn_fraction: 0.3
+    opponent_noise: 0.05
+    env_overrides:
+      visibility_radius: 6
+      spawn_mode: near_base
+      spawn_allow_base: true
+    maps: []
+    opponents:
+    - kind: scripted
+      weight: 2.0
+      params:
+        roles:
+        - attacker
+        - defender
+        - scout
+        guard_mode: leash
+        guard_leash: 2
+        scout_behavior: random
+        chase_radius: 0
+        escort: false
+      label: scripted_a
+    - kind: scripted
+      weight: 1.0
+      params:
+        roles:
+        - attacker
+        - defender
+        - scout
+        guard_mode: on_flag
+        guard_leash: 0
+        scout_behavior: stay
+        chase_radius: 0
+        escort: false
+      label: scripted_b
+    - kind: random
+      weight: 1.0
+      params: {}
+      label: random
+  - name: real_setting
+    max_steps: 5500000
+    advance_win_rate: 1.0
+    window_episodes: 200
+    fixed_spawn_fraction: 0.5
+    opponent_noise: 0.05
+    env_overrides:
+      visibility_radius: 3
+      spawn_mode: near_base
+      spawn_allow_base: true
+    maps: []
+    opponents:
+    - kind: scripted
+      weight: 2.0
+      params:
+        roles:
+        - attacker
+        - defender
+        - scout
+        guard_mode: leash
+        guard_leash: 2
+        scout_behavior: random
+        chase_radius: 0
+        escort: false
+      label: scripted_a
+    - kind: scripted
+      weight: 1.0
+      params:
+        roles:
+        - attacker
+        - defender
+        - scout
+        guard_mode: on_flag
+        guard_leash: 0
+        scout_behavior: stay
+        chase_radius: 0
+        escort: false
+      label: scripted_b
+    - kind: scripted
+      weight: 1.0
+      params:
+        roles:
+        - attacker
+        - attacker
+        - defender
+        guard_mode: leash
+        guard_leash: 3
+        scout_behavior: stay
+        chase_radius: 0
+        escort: false
+      label: scripted_c
+    - kind: random
+      weight: 0.5
+      params: {}
+      label: random
+    - kind: stay
+      weight: 0.5
+      params: {}
+      label: stay
+
+noise_free_eval:
+  enabled: false                   # periodic argmax / exact-opponent evaluation (rl.train_eval): the clean curve next to the noisy training win rate
+  every_steps: 500000              # run after the update that crosses each multiple of this
+  at_end: true                     # also once after the last update
+  config_path: configs/rl/eval_train.yaml   # small strict eval YAML (20 episodes per opponent, no minimax)
+  overrides: {}                    # e.g. {episodes: 40} on top of that file
+
+league:
+  snapshot_every_steps: 0
+  keep_snapshots: 0
+  cache_size: 4
+  directory: ""

@@ -1,0 +1,184 @@
+# MAPPO training configuration. EVERY key is required: nothing is defaulted in code.
+# Override from the command line with  --set ppo.learning_rate=1e-4  (dotted paths).
+
+run:
+  name: mappo_default
+  output_dir: runs                 # run files go to <output_dir>/<name>/
+  seed: 0
+  device: cpu                      # cpu | cuda | mps | auto  (cpu is fastest for this tiny net)
+  torch_threads: 2
+  checkpoint_every_steps: 250000
+  keep_checkpoints: 0              # newest periodic checkpoints kept (0 = keep all; keeping all feeds the time-lapse).
+                                   # Keep 0 on Colab too: a positive value deletes the early step_*.pt files, and an
+                                   # early-vs-late comparison or a time-lapse needs them (each is ~1.4 MB, so 20 files is nothing)
+  log_every_updates: 1
+  tensorboard: true                # also write TensorBoard event files
+
+env:
+  config_path: configs/ctf_v2.yaml   # base environment (v2 rules, 4 agents per team); phases override parts of it below
+
+roles:
+  slots: [attacker, attacker, defender, scout]  # role of agents 1..4 of a team (sorted ids); slots 1-2 are the env's carrier_slots
+
+features:
+  mirror_blue: true                # BLUE sees the board flipped, so one policy plays both sides
+  staleness_horizon: 50            # steps until a seen cell counts as fully stale
+
+rewards:
+  win: 10.0
+  loss: -10.0
+  timeout: -1.0
+  pickup: 2.0
+  tagged_while_carrying: -2.0
+  tag_enemy_carrier: 2.0
+  tag_team_share: 0.5              # each teammate of the tagger also gets this
+  attacker_potential: 0.05         # per cell of path distance gained toward the enemy flag
+  attacker_carry_potential: 0.2    # per cell gained while carrying the flag home (denser: this is the hard part)
+  carry_step_penalty: -0.02        # per step while carrying; stops 'grab the flag, then freeze'
+  defender_potential: 0.02
+  scout_new_cell: 0.05             # per newly seen cell (scout role only)
+  scout_anneal_steps: 3000000      # scout bonus fades linearly over this many steps ...
+  scout_floor_fraction: 0.3        # ... down to this share of the full bonus (0 = fade out completely)
+  step_penalty: -0.002
+  # Share of the team outcome each role receives. Below 1 the role's own shaping matters more than the
+  # shared result, which counters free-riding (the old run's scout made the captures, the attacker idled).
+  outcome_share_attacker: 1.0
+  outcome_share_defender: 0.7
+  outcome_share_scout: 0.5
+  # A non-carrying teammate within escort_radius of a flag carrier (0 = same cell) earns this per step.
+  # The headcount rule makes a lone carrier lose to a single defender; an escort fixes that.
+  escort_bonus: 0.02
+  escort_radius: 0
+  escort_roles: [attacker, scout]
+  defender_intercept_potential: 0.06  # per cell gained toward the nearest enemy carrier (guarding: defender_potential)
+
+model:
+  conv_channels: [16, 16]          # PPO update cost scales with this: [32,32,16]/256 is ~2.7x slower
+  kernel_size: 3
+  hidden_size: 128
+
+ppo:
+  learning_rate: 0.0003
+  learning_rate_final: 0.00003     # linear decay over total_steps
+  gamma: 0.99
+  gae_lambda: 0.95
+  clip_epsilon: 0.2
+  entropy_coef: 0.01
+  entropy_coef_final: 0.003        # linear decay over total_steps
+  value_coef: 0.5
+  max_grad_norm: 0.5
+  epochs: 4
+  num_minibatches: 4
+  adam_eps: 0.00001
+  normalize_advantages: true
+  value_normalization: true        # running mean/std of returns (MAPPO "ValueNorm")
+
+rollout:
+  num_envs: 16
+  num_workers: 4                   # worker processes, at most num_envs; 0 = run in the main process (debugging)
+  rollout_length: 128
+  total_steps: 5000000             # environment steps (one step = both teams moving once); phases 1+2 may take at most 2.5M of them
+
+curriculum:
+  learner_side: random             # red | blue | random, drawn per episode
+  # A phase ends when the rolling win rate over `window_episodes` reaches
+  # `advance_win_rate`, or after `max_steps`. The last phase runs to the end.
+  phases:
+    # Phase 1 teaches the whole task (grab the flag, run home, capture) with the opponents
+    # starting in the far corners, away from their flag. Starting next to a guarded flag made
+    # the agent learn "grab the flag, then freeze" (measured), so defenders arrive in phase 2.
+    # Opponent `label`s name the metric series (win_rate/opp_<label>); they must be unique per phase.
+    - name: learn_the_task
+      max_steps: 1000000
+      advance_win_rate: 0.7
+      window_episodes: 200
+      fixed_spawn_fraction: 0.0
+      opponent_noise: 0.0
+      env_overrides:
+        visibility_radius: 20      # larger than the map = full view
+        spawn_mode: shuffle        # same cells, random assignment (corners are mirror-symmetric)
+        red_spawns: [[0, 0], [0, 6], [2, 0], [2, 6]]
+        blue_spawns: [[10, 0], [10, 6], [8, 0], [8, 6]]
+      maps: []
+      opponents:
+        - {kind: stay, label: stay, weight: 1.0, params: {}}
+        - {kind: random, label: random, weight: 1.0, params: {}}
+
+    # Phase 2: real guards, wide view. A parked guard can only be beaten by an escorted carrier.
+    - name: handle_defenders
+      max_steps: 1500000
+      advance_win_rate: 0.7
+      window_episodes: 200
+      fixed_spawn_fraction: 0.3
+      opponent_noise: 0.05         # share of a SCRIPTED/random/minimax opponent's moves replaced by random ones (never a kind: checkpoint opponent)
+      env_overrides:
+        visibility_radius: 6
+        spawn_mode: near_base
+        spawn_allow_base: true
+      maps: []
+      opponents:
+        - kind: scripted
+          label: scripted_leash
+          weight: 2.0
+          params: {roles: [attacker, attacker, defender, scout], guard_mode: leash, guard_leash: 2, scout_behavior: random, chase_radius: 0, escort: false}
+        - kind: scripted
+          label: scripted_parked
+          weight: 1.0
+          params: {roles: [attacker, attacker, defender, scout], guard_mode: on_flag, guard_leash: 0, scout_behavior: stay, chase_radius: 0, escort: false}
+        - {kind: random, label: random, weight: 1.0, params: {}}
+
+    # Phase 3: the real setting (radius 3), every opponent style, including chasers and escorted attackers.
+    - name: real_setting
+      max_steps: 2500000           # not used: the last phase runs to rollout.total_steps (1M + 1.5M + 2.5M = 5M)
+      advance_win_rate: 1.0        # last phase: runs until rollout.total_steps
+      window_episodes: 200
+      fixed_spawn_fraction: 0.5
+      opponent_noise: 0.03
+      env_overrides:
+        visibility_radius: 3
+        spawn_mode: near_base
+        spawn_allow_base: true
+      # Training pool of layouts (configs/maps/*.yaml): each episode draws one map by weight; only walls, bases and
+      # spawn cells come from the file, the rules stay the base config's. Empty = every episode uses the base map
+      # (configs/ctf_v2.yaml). Every pool map must be 11x7 and mirror symmetric (checked at startup), and none may
+      # be a held-out map of noise_free_eval (center_gate and long_wall_south stay unseen to measure transfer).
+      # `env_overrides` must not contain obstacles / red_base / blue_base / red_spawns / blue_spawns when a pool is set.
+      maps:
+        - {path: configs/maps/default.yaml, label: default, weight: 2.0}
+        - {path: configs/maps/center_pillar.yaml, label: center_pillar, weight: 1.0}
+        - {path: configs/maps/open_field.yaml, label: open_field, weight: 1.0}
+        - {path: configs/maps/pillars.yaml, label: pillars, weight: 1.0}
+        - {path: configs/maps/two_corridors.yaml, label: two_corridors, weight: 1.0}
+      opponents:
+        - kind: scripted
+          label: scripted_leash
+          weight: 2.0
+          params: {roles: [attacker, attacker, defender, scout], guard_mode: leash, guard_leash: 2, scout_behavior: random, chase_radius: 0, escort: false}
+        - kind: scripted
+          label: scripted_parked
+          weight: 1.0
+          params: {roles: [attacker, attacker, defender, scout], guard_mode: on_flag, guard_leash: 0, scout_behavior: stay, chase_radius: 0, escort: false}
+        - kind: scripted
+          label: scripted_chaser
+          weight: 2.0
+          params: {roles: [attacker, attacker, defender, scout], guard_mode: chaser, guard_leash: 0, scout_behavior: random, chase_radius: 4, escort: false}
+        - kind: scripted
+          label: scripted_escort
+          weight: 2.0
+          params: {roles: [attacker, attacker, defender, scout], guard_mode: leash, guard_leash: 3, scout_behavior: stay, chase_radius: 0, escort: true}
+        - {kind: random, label: random, weight: 0.5, params: {}}
+        - {kind: stay, label: stay, weight: 0.5, params: {}}
+
+noise_free_eval:
+  enabled: true                    # periodic argmax / exact-opponent evaluation (rl.train_eval): the clean curve next to the noisy training win rate
+  every_steps: 500000              # run after the update that crosses each multiple of this
+  at_end: true                     # also once after the last update
+  config_path: configs/rl/eval_train.yaml   # small strict eval YAML (20 episodes per opponent, no minimax)
+  overrides: {}                    # e.g. {episodes: 40} on top of that file
+
+league:                            # frozen past policies as opponents (kind: checkpoint, docs/league.md); off here
+  snapshot_every_steps: 0          # >0: save a weights-only snapshot into the league folder after every multiple of this
+  keep_snapshots: 0                # newest snapshots kept on disk (0 = all)
+  cache_size: 4                    # policies each worker process keeps loaded
+  directory: ""                    # league folder; "" = <run>/league. On Colab set a LOCAL path (e.g. /content/league):
+                                   # workers list it and load from it at every episode reset, which is slow on Drive

@@ -1,0 +1,10 @@
+# Settings of scripts/make_rl_plots.py (strict: unknown or missing keys are errors).
+figure:
+  dpi: 160
+  bar_width: 8.0        # inches, figure width of the bar charts
+  curve_width: 10.0     # inches, figure width of the training curves
+  row_height: 0.55      # inches per opponent / map row in the bar charts
+  curve_height: 3.2     # inches per curve panel
+smoothing_window: 40    # metric rows averaged in the training curves (one row is one update)
+colors: ["#2b6cb0", "#dd6b20", "#2f855a", "#805ad5", "#c53030", "#718096", "#b7791f", "#d53f8c"]   # one per run / evaluation / map, in order (8: the maps of all_maps.yaml need 7)
+unseen_hatch: "//"      # held-out maps the policy never trained on get this hatch

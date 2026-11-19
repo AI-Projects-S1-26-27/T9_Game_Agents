@@ -1,0 +1,58 @@
+width: 11
+height: 7
+agents_per_team: 4
+tagging_enabled: true
+max_episode_steps: 200
+seed: 42
+visibility_radius: 3
+spawn_mode: fixed
+spawn_radius: 3
+spawn_allow_base: true
+obstacles:
+- - 3
+  - 2
+- - 3
+  - 4
+- - 5
+  - 1
+- - 5
+  - 2
+- - 5
+  - 4
+- - 5
+  - 5
+- - 7
+  - 2
+- - 7
+  - 4
+red_base:
+- 1
+- 3
+blue_base:
+- 9
+- 3
+red_spawns:
+- - 1
+  - 2
+- - 1
+  - 4
+- - 1
+  - 3
+- - 2
+  - 3
+blue_spawns:
+- - 9
+  - 2
+- - 9
+  - 4
+- - 9
+  - 3
+- - 8
+  - 3
+carrier_slots:
+- 1
+- 2
+tagging_rule: headcount
+drop_flag_on_tag: true
+dropped_flag_enemy_pickup: true
+dropped_flag_return_on_touch: true

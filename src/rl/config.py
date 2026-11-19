@@ -1,0 +1,326 @@
+"""RL experiment configuration.
+
+The YAML file is the single source of truth: every field below is required, so no
+hyperparameter is ever hidden in code. Load with :func:`load_rl_config`, which also
+accepts dotted overrides (``{"ppo.learning_rate": 1e-4}``) that go through the same
+strict validation.
+"""
+
+from __future__ import annotations
+
+import re
+from dataclasses import dataclass
+from enum import Enum
+from pathlib import Path
+from typing import Any
+
+from ctf.config import CTFConfig, config_from_dict, config_to_dict, load_config
+from rl.maps import MAP_KEYS, training_map_env_config
+from rl.schema import ConfigError, apply_overrides, from_dict, read_yaml
+from strategies.roles import Role
+
+
+class LearnerSide(str, Enum):
+    RED = "red"
+    BLUE = "blue"
+    RANDOM = "random"
+
+
+@dataclass(frozen=True)
+class RunConfig:
+    name: str
+    output_dir: str
+    seed: int
+    device: str  # "cpu", "cuda", "mps" or "auto"
+    torch_threads: int
+    checkpoint_every_steps: int
+    keep_checkpoints: int  # periodic checkpoints to keep (0 = keep all); phase snapshots are never pruned
+    log_every_updates: int
+    tensorboard: bool
+
+
+@dataclass(frozen=True)
+class EnvSection:
+    config_path: str  # base environment YAML (see configs/default.yaml)
+
+
+@dataclass(frozen=True)
+class RolesConfig:
+    slots: list[Role]  # role of each team slot, in sorted agent-id order
+
+
+@dataclass(frozen=True)
+class FeaturesConfig:
+    mirror_blue: bool  # flip the grid for BLUE so every agent sees "my base on the left"
+    staleness_horizon: int  # steps after which a seen cell counts as fully stale
+
+
+@dataclass(frozen=True)
+class RewardsConfig:
+    win: float
+    loss: float
+    timeout: float
+    pickup: float
+    tagged_while_carrying: float
+    tag_enemy_carrier: float
+    tag_team_share: float
+    attacker_potential: float  # reward per cell of path distance saved while heading for the flag
+    attacker_carry_potential: float  # same, while carrying the flag home
+    carry_step_penalty: float  # per step while carrying the flag (makes idling with it costly)
+    defender_potential: float
+    scout_new_cell: float
+    scout_anneal_steps: int  # scout bonus decays linearly over this many steps ...
+    scout_floor_fraction: float  # ... down to this share of the full bonus (0 = fades out completely)
+    step_penalty: float
+    # Share of the team outcome (win / loss / timeout) each role receives. Below 1 it lets the
+    # role-specific rewards matter more than the shared result.
+    outcome_share_attacker: float
+    outcome_share_defender: float
+    outcome_share_scout: float
+    # Escort: a non-carrying teammate of a flag carrier earns this per step while within
+    # `escort_radius` cells (Manhattan; 0 = same cell) of the carrier. Only roles in `escort_roles`.
+    escort_bonus: float
+    escort_radius: int
+    escort_roles: list[Role]
+    # Defender: per cell of path distance gained toward the nearest enemy flag carrier (when one exists).
+    defender_intercept_potential: float
+
+
+@dataclass(frozen=True)
+class ModelConfig:
+    conv_channels: list[int]
+    kernel_size: int
+    hidden_size: int
+
+
+@dataclass(frozen=True)
+class PPOConfig:
+    learning_rate: float
+    learning_rate_final: float
+    gamma: float
+    gae_lambda: float
+    clip_epsilon: float
+    entropy_coef: float
+    entropy_coef_final: float
+    value_coef: float
+    max_grad_norm: float
+    epochs: int
+    num_minibatches: int
+    adam_eps: float
+    normalize_advantages: bool
+    value_normalization: bool
+
+
+@dataclass(frozen=True)
+class RolloutConfig:
+    num_envs: int
+    num_workers: int
+    rollout_length: int
+    total_steps: int
+
+
+@dataclass(frozen=True)
+class OpponentSpec:
+    kind: str
+    label: str  # metrics are split per label (win_rate/opp_<label>); unique within a phase
+    weight: float
+    params: dict[str, Any]
+
+
+@dataclass(frozen=True)
+class PhaseMapSpec:
+    """One map of a phase's training pool (see ``rl.maps``): episodes draw a map by ``weight``."""
+
+    path: str  # map YAML (configs/maps/*.yaml); only walls, bases and spawn cells are used
+    label: str  # metrics are split per label (win_rate/map_<label>); unique within a phase
+    weight: float
+
+
+@dataclass(frozen=True)
+class PhaseConfig:
+    name: str
+    max_steps: int
+    advance_win_rate: float
+    window_episodes: int
+    fixed_spawn_fraction: float  # share of episodes that use the default (fixed) spawns
+    env_overrides: dict[str, Any]  # CTFConfig keys applied on top of the base env config
+    opponent_noise: float  # probability that an opponent action is replaced by a random one
+    opponents: list[OpponentSpec]
+    maps: list[PhaseMapSpec]  # training pool of layouts; empty = every episode uses the base map. Not combinable with map keys in env_overrides
+
+
+@dataclass(frozen=True)
+class CurriculumConfig:
+    learner_side: LearnerSide
+    phases: list[PhaseConfig]
+
+
+@dataclass(frozen=True)
+class NoiseFreeEvalConfig:
+    """Periodic noise-free evaluation during training (see ``rl.train_eval``).
+
+    Training metrics come from games with sampled actions, ``opponent_noise`` and a curriculum
+    that changes the settings; this hook measures the current policy the way ``rl.evaluate`` does
+    (argmax actions, exactly scripted opponents, fixed seeds) so the curve is comparable over time.
+    """
+
+    enabled: bool
+    every_steps: int  # run after the update that crosses each multiple of this many environment steps
+    at_end: bool  # also run once after the last update (unless one just ran at that step)
+    config_path: str  # eval YAML (configs/rl/eval_train.yaml); strict, same schema as configs/rl/eval.yaml
+    overrides: dict[str, Any]  # dotted EvalConfig overrides, e.g. {"episodes": 40}
+
+
+@dataclass(frozen=True)
+class LeagueConfig:
+    """Snapshots of the learner that ``kind: checkpoint, source: league`` opponents play against (see ``rl.league``)."""
+
+    snapshot_every_steps: int  # save a weights-only snapshot after the update crossing each multiple (0 = never: no league)
+    keep_snapshots: int  # newest snapshots kept on disk (0 = keep all)
+    cache_size: int  # policies each worker process keeps loaded in memory
+    directory: str  # where snapshots live; "" = <run>/league. On Colab use a local path (e.g. /content/league), not Drive
+
+
+@dataclass(frozen=True)
+class RLConfig:
+    run: RunConfig
+    env: EnvSection
+    roles: RolesConfig
+    features: FeaturesConfig
+    rewards: RewardsConfig
+    model: ModelConfig
+    ppo: PPOConfig
+    rollout: RolloutConfig
+    curriculum: CurriculumConfig
+    noise_free_eval: NoiseFreeEvalConfig
+    league: LeagueConfig
+
+    def __post_init__(self) -> None:
+        _validate(self)
+
+
+def _check(condition: bool, message: str) -> None:
+    if not condition:
+        raise ConfigError(message)
+
+
+def _validate(cfg: RLConfig) -> None:
+    p, r = cfg.ppo, cfg.rollout
+    _check(0.0 < p.gamma <= 1.0, "ppo.gamma must be in (0, 1]")
+    _check(0.0 <= p.gae_lambda <= 1.0, "ppo.gae_lambda must be in [0, 1]")
+    _check(p.clip_epsilon > 0, "ppo.clip_epsilon must be > 0")
+    _check(p.epochs >= 1 and p.num_minibatches >= 1, "ppo.epochs/num_minibatches must be >= 1")
+    _check(p.learning_rate > 0 and p.learning_rate_final >= 0, "learning rates must be positive")
+    _check(r.num_envs >= 1 and r.rollout_length >= 1 and r.total_steps >= 1, "rollout sizes must be >= 1")
+    _check(0 <= r.num_workers <= r.num_envs, "rollout.num_workers must be in [0, num_envs] (0 = run in the main process)")
+    _check(cfg.run.keep_checkpoints >= 0 and cfg.run.checkpoint_every_steps >= 1, "run.keep_checkpoints must be >= 0 and run.checkpoint_every_steps >= 1")
+    _check(len(cfg.model.conv_channels) >= 1, "model.conv_channels needs at least one layer")
+    _check(cfg.model.kernel_size % 2 == 1, "model.kernel_size must be odd")
+    _check(cfg.features.staleness_horizon >= 1, "features.staleness_horizon must be >= 1")
+    _check(len(cfg.roles.slots) >= 1, "roles.slots must not be empty")
+    _check(cfg.rewards.scout_anneal_steps >= 1, "rewards.scout_anneal_steps must be >= 1")
+    rw = cfg.rewards
+    _check(0.0 <= rw.scout_floor_fraction <= 1.0, "rewards.scout_floor_fraction must be in [0, 1]")
+    _check(rw.escort_radius >= 0, "rewards.escort_radius must be >= 0")
+    for name in ("outcome_share_attacker", "outcome_share_defender", "outcome_share_scout"):
+        _check(getattr(rw, name) >= 0.0, f"rewards.{name} must be >= 0")
+
+    phases = cfg.curriculum.phases
+    _check(len(phases) >= 1, "curriculum.phases must not be empty")
+    for i, ph in enumerate(phases):
+        loc = f"curriculum.phases[{i}] ({ph.name})"
+        _check(ph.max_steps >= 1, f"{loc}: max_steps must be >= 1")
+        _check(0.0 <= ph.advance_win_rate <= 1.0, f"{loc}: advance_win_rate must be in [0, 1]")
+        _check(ph.window_episodes >= 1, f"{loc}: window_episodes must be >= 1")
+        _check(0.0 <= ph.fixed_spawn_fraction <= 1.0, f"{loc}: fixed_spawn_fraction must be in [0, 1]")
+        _check(0.0 <= ph.opponent_noise <= 1.0, f"{loc}: opponent_noise must be in [0, 1]")
+        _check(len(ph.opponents) >= 1, f"{loc}: needs at least one opponent")
+        _check(all(o.weight > 0 for o in ph.opponents), f"{loc}: opponent weights must be > 0")
+        labels = [o.label for o in ph.opponents]
+        _check(all(re.fullmatch(r"[a-z0-9_]+", lab) for lab in labels), f"{loc}: opponent labels must match [a-z0-9_]+, got {labels}")
+        _check(len(set(labels)) == len(labels), f"{loc}: opponent labels must be unique, got {labels}")
+        map_labels = [m.label for m in ph.maps]
+        _check(all(m.weight > 0 for m in ph.maps), f"{loc}: map weights must be > 0")
+        _check(all(re.fullmatch(r"[a-z0-9_]+", lab) for lab in map_labels), f"{loc}: map labels must match [a-z0-9_]+, got {map_labels}")
+        _check(len(set(map_labels)) == len(map_labels), f"{loc}: map labels must be unique, got {map_labels}")
+        if ph.maps:
+            clash = sorted(k for k in MAP_KEYS if k in ph.env_overrides)
+            _check(not clash, f"{loc}: env_overrides {clash} would silently replace the walls/bases/spawns of the maps pool; remove them or empty `maps`")
+    nf = cfg.noise_free_eval
+    _check(nf.every_steps >= 1, "noise_free_eval.every_steps must be >= 1")
+    _check(bool(nf.config_path) or not nf.enabled, "noise_free_eval.config_path must be set when enabled")
+    from rl.league import validate_league_settings  # imported here: rl.league needs this module's types
+
+    validate_league_settings(cfg)
+    capped = sum(ph.max_steps for ph in phases[:-1])
+    _check(capped < r.total_steps, "phase max_steps (excluding the last phase) must be < rollout.total_steps")
+
+
+def load_base_env_config(cfg: RLConfig, root: Path | None = None) -> CTFConfig:
+    """Load the base environment config; relative paths resolve against ``root`` (default: cwd)."""
+    path = Path(cfg.env.config_path)
+    if not path.is_absolute() and root is not None:
+        path = root / path
+    env_cfg = load_config(path)
+    _check(
+        len(cfg.roles.slots) == env_cfg.agents_per_team,
+        f"roles.slots has {len(cfg.roles.slots)} entries but the env has "
+        f"{env_cfg.agents_per_team} agents per team",
+    )
+    return env_cfg
+
+
+def phase_map_bases(base: CTFConfig, phase: PhaseConfig) -> list[tuple[str, float, CTFConfig]]:
+    """The phase's maps as ``(label, weight, base env config with that map's layout)``.
+
+    Without a ``maps`` pool this is the single entry ``("", 1.0, base)``. The phase's ``env_overrides`` are NOT
+    applied here (pass each result to :func:`phase_env_config`). A pool map is loaded with the checks of a
+    training map (same size, mirror symmetric, connected bases).
+    """
+    if not phase.maps:
+        return [("", 1.0, base)]
+    return [(m.label, m.weight, training_map_env_config(base, m.path)) for m in phase.maps]
+
+
+def phase_env_config(base: CTFConfig, phase: PhaseConfig, *, fixed_spawns: bool) -> CTFConfig:
+    """Base env config with the phase's overrides; ``fixed_spawns`` forces spawn_mode=fixed.
+
+    ``base`` is the base environment or one entry of :func:`phase_map_bases` (the map's layout comes with it).
+    """
+    merged = {**config_to_dict(base), **phase.env_overrides}
+    if fixed_spawns:
+        merged["spawn_mode"] = "fixed"
+    try:
+        return config_from_dict(merged)
+    except ValueError as exc:
+        raise ConfigError(f"phase {phase.name!r} env_overrides invalid: {exc}") from exc
+
+
+def load_rl_config(path: str | Path, overrides: dict[str, Any] | None = None) -> RLConfig:
+    data = read_yaml(path)
+    if overrides:
+        data = apply_overrides(data, overrides)
+    return from_dict(RLConfig, data)
+
+
+def config_to_plain(cfg: RLConfig) -> dict[str, Any]:
+    from rl.schema import to_dict
+
+    return to_dict(cfg)
+
+
+__all__ = [
+    "ConfigError",
+    "LearnerSide",
+    "RLConfig",
+    "PhaseConfig",
+    "OpponentSpec",
+    "PhaseMapSpec",
+    "NoiseFreeEvalConfig",
+    "LeagueConfig",
+    "load_rl_config",
+    "load_base_env_config",
+    "phase_env_config",
+    "phase_map_bases",
+    "config_to_plain",
+]

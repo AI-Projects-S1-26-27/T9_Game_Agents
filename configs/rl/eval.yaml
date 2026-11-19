@@ -1,0 +1,105 @@
+# Noise-free evaluation settings for python -m rl.evaluate. EVERY key is required (strict, like the
+# training config). There is no opponent-noise key on purpose: evaluation plays opponents exactly as
+# scripted. For the old 3-agent checkpoint (runs/colab_run1) use configs/rl/eval_legacy.yaml.
+
+episodes: 200            # per opponent; split evenly over `sides` (100 as RED + 100 as BLUE)
+seed: 2026               # all spawns and opponent randomness derive from it: same seed = same games
+confidence: 0.95         # level of every interval (Wilson for rates, normal approximation for means)
+sides: [red, blue]       # sides the policy plays (the policy is mirrored, so check both)
+policy_mode: argmax      # argmax = best action (demo behaviour) | sampled = draw from the policy (training behaviour)
+fixed_spawn_fraction: 0.0   # 0 = every episode uses randomized spawns (env_overrides.spawn_mode)
+
+# CTFConfig keys applied on top of the env config stored in the checkpoint (or --env-config).
+# Extra keys can be added from the command line with --env-set, e.g. --env-set visibility_radius=6.
+env_overrides:
+  spawn_mode: near_base  # random distinct cells near the home base (what the last training phase used)
+
+# Route choice counts how often these roles ENTER the centre column(s) through the top / middle /
+# bottom lane (on the default map the wall leaves one gap at the top and one at the bottom).
+route_roles: [attacker]
+
+opponents:
+  - {kind: random, label: random, params: {}}
+  - {kind: stay, label: stay, params: {}}
+  - kind: scripted
+    label: scripted_leash
+    params: {roles: [attacker, attacker, defender, scout], guard_mode: leash, guard_leash: 2, scout_behavior: random, chase_radius: 0, escort: false}
+  - kind: scripted
+    label: scripted_parked
+    params: {roles: [attacker, attacker, defender, scout], guard_mode: on_flag, guard_leash: 0, scout_behavior: stay, chase_radius: 0, escort: false}
+  - kind: scripted
+    label: scripted_chaser
+    params: {roles: [attacker, attacker, defender, scout], guard_mode: chaser, guard_leash: 0, scout_behavior: random, chase_radius: 4, escort: false}
+  - kind: scripted
+    label: scripted_escort
+    params: {roles: [attacker, attacker, defender, scout], guard_mode: leash, guard_leash: 3, scout_behavior: stay, chase_radius: 0, escort: true}
+  # Alpha-beta search opponent (docs/minimax.md); same settings as the live viewer's "Minimax" entry.
+  # About 10 ms per decision: this row dominates the run time.
+  - kind: minimax
+    label: minimax
+    params:
+      depth: 2
+      own_moves_per_agent: 2
+      enemy_moves_per_agent: 2
+      danger_radius: 3
+      max_nodes: 4000
+      alpha_beta: true
+      weights: {win: 1000.0, carry_progress: 4.0, pickup: 20.0, approach: 1.0, approach_others: 0.5, escort: 2.0, enemy_carry_progress: 4.0, enemy_pickup: 20.0, defend: 1.0, alive: 3.0, pressure: 1.5}
+  # The classical AI (src/classical_ai: A* + influence map + behaviour tree, written by a teammate). Its roles are
+  # fixed per slot here; its own default assignment is positional over ACTIVE agents and is wrong for v2.
+  # About 0.5 ms per decision. Smoke-tested on v2 (docs/evaluation.md lists what it does not know).
+  - kind: classical
+    label: classical
+    params: {roles: [attacker, attacker, defender, scout]}
+  # The same AI with the known problems fixed in src/rl/classical_fixes.py (docs/classical.md lists each fix and its switch).
+  # Every key is spelled out; the numbers are the original literals of src/classical_ai.
+  - kind: classical
+    label: classical_fixed
+    params:
+      roles: [attacker, attacker, defender, scout]
+      remember_dropped_flag: true
+      defend_dropped_flag: true
+      buddy_system: true
+      intercept_in_pairs: true
+      pair_guard_radius: 2
+      pair_wait_steps: 20
+      carrier_danger_radius: 2
+      influence_radius: 3
+      enemy_penalty: 5.0
+      probability_weight: 3.0
+  # An LLM opponent has no hookup (it cannot run on Colab): register a factory in
+  # rl.evaluate.EXTERNAL_OPPONENTS and add its entry here (docs/evaluation.md explains how).
+
+# --- extra checks -----------------------------------------------------------------------------
+# Held-out maps: other 11x7 layouts (configs/maps) the policy was never trained on (training uses the
+# map in configs/ctf_v2.yaml, which is the same as configs/maps/default.yaml). Only walls, bases and
+# spawn cells come from the map file; rules and everything else stay as in the policy's env config.
+# Opponent labels must exist in `opponents` above; minimax is left out because it is slow.
+held_out:
+  episodes: 40               # per (map, opponent), split over `sides`
+  opponents: [scripted_leash, scripted_parked, scripted_chaser, scripted_escort]
+  maps:
+    - {label: center_gate, path: configs/maps/center_gate.yaml}
+    - {label: center_pillar, path: configs/maps/center_pillar.yaml}
+    - {label: long_wall_south, path: configs/maps/long_wall_south.yaml}
+    - {label: open_field, path: configs/maps/open_field.yaml}
+    - {label: pillars, path: configs/maps/pillars.yaml}
+    - {label: two_corridors, path: configs/maps/two_corridors.yaml}
+
+# Role-swap sensitivity (REPORT ONLY, no pass/fail key on purpose): at every decision the role inputs
+# (one-hot + role head) of the named role pairs are swapped and the argmax action is compared with the
+# unswapped one. A policy that ignores its role scores 0%, but an UNTRAINED network already scores roughly
+# 55-96% (the value depends on the random seed; the Run 1 policy at 3.75M steps scored 40-74%), so a
+# threshold would prove nothing. Judge role specialisation from the behaviour numbers instead (defender
+# distance to its own flag, scout coverage, per-role action histograms and heatmaps).
+role_swap:
+  enabled: true
+  episodes: 20               # games played (per opponent) to collect decisions
+  opponents: [scripted_chaser, scripted_escort]
+  swaps: [[attacker, defender], [attacker, scout], [defender, scout]]
+
+# Argmax (what the demo plays) vs sampled actions (what training used), same seeded games.
+policy_check:
+  enabled: true
+  episodes: 40               # per opponent and mode
+  opponents: [scripted_leash, scripted_chaser, scripted_escort]

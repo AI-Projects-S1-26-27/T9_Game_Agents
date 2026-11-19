@@ -1,0 +1,28 @@
+{
+  "git_commit": "e2e8d4e5886d383a870acdc185bc0f331a2c830c",
+  "python": "3.13.16",
+  "torch": "2.14.1+cu130",
+  "platform": "Linux-6.6.159+-x86_64-with-glibc2.39",
+  "argv": [
+    "/content/Multiagent_CTF/src/rl/train.py",
+    "--config",
+    "configs/rl/default.yaml",
+    "--set",
+    "run.name=v2_run1",
+    "--set",
+    "run.output_dir=/content/drive/MyDrive/ctf_runs",
+    "--set",
+    "run.device=cuda",
+    "--set",
+    "run.torch_threads=1",
+    "--set",
+    "rollout.num_workers=2",
+    "--set",
+    "rollout.total_steps=5000000",
+    "--set",
+    "run.keep_checkpoints=5",
+    "--resume",
+    "latest"
+  ],
+  "started": "2026-11-16 05:37:15"
+}

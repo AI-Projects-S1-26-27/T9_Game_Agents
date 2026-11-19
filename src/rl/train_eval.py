@@ -1,0 +1,201 @@
+"""Noise-free evaluation hook for the training loop (``noise_free_eval`` in the RL config).
+
+The numbers in ``metrics.jsonl`` that training logs per update come from games with sampled
+actions, ``opponent_noise`` and whatever curriculum phase is active, so they are not a clean
+measurement. Every ``noise_free_eval.every_steps`` environment steps the trainer calls
+:class:`NoiseFreeEvaluator`, which plays the CURRENT policy through the same code as
+``python -m rl.evaluate`` (argmax actions, exactly scripted opponents, fixed seeds) on the small
+eval YAML named in the config, and returns plain scalars for the metrics log plus a full report.
+"""
+
+from __future__ import annotations
+
+import json
+import time
+from pathlib import Path
+from random import Random
+from typing import Any
+
+import torch
+
+from ctf.config import CTFConfig, config_to_dict
+from rl.config import RLConfig
+from rl.eval_config import EvalConfig, PolicyMode, load_eval_config
+from rl.evaluate import build_eval_opponent, eval_env_config, evaluate_extras, evaluate_policy, held_out_env_config
+from rl.mappo import ValueNorm
+from rl.maps import layout_key, same_file, training_map_env_config
+from rl.networks import ActorCritic
+from rl.rl_strategy import RLStrategy
+from rl.schema import ConfigError, to_dict
+
+
+def load_training_eval_config(cfg: RLConfig, root: Path | None = None) -> EvalConfig:
+    """The eval config named by ``cfg.noise_free_eval``; relative paths resolve against ``root``."""
+    nf = cfg.noise_free_eval
+    path = Path(nf.config_path)
+    if not path.is_absolute() and root is not None:
+        path = root / path
+    eval_cfg = load_eval_config(path, nf.overrides)
+    n_roles = len(cfg.roles.slots)
+    for opp in eval_cfg.opponents:
+        roles = opp.params.get("roles")
+        if roles is not None and len(roles) != n_roles:
+            raise ConfigError(
+                f"noise_free_eval: opponent {opp.label!r} in {path} has {len(roles)} roles but the team has {n_roles}"
+            )
+    return eval_cfg
+
+
+def validate_map_pools(cfg: RLConfig, env_config: CTFConfig, eval_cfg: EvalConfig | None = None) -> None:
+    """Fail at startup if a phase's ``maps`` pool is unusable or overlaps the noise-free evaluation's held-out maps.
+
+    Every pool map must exist and pass the training-map checks (same size, mirror symmetric, connected bases).
+    The held-out maps of ``eval_cfg`` are the transfer test, so none of them may be a pool map: same file, or
+    the same layout (walls and bases) under another name, is an error naming both files.
+    """
+    pool: list[tuple[str, str, tuple]] = []  # (phase, map spec text, layout)
+    for phase in cfg.curriculum.phases:
+        for spec in phase.maps:
+            where = f"phase {phase.name!r} map {spec.label!r} ({spec.path})"
+            if not Path(spec.path).exists():
+                raise ConfigError(f"{where}: map file not found")
+            pool.append((phase.name, spec.path, layout_key(training_map_env_config(env_config, spec.path))))
+    if eval_cfg is None:
+        return
+    for held in eval_cfg.held_out.maps:
+        held_layout = layout_key(held_out_env_config(env_config, held.path))
+        for phase_name, pool_path, pool_layout in pool:
+            if same_file(held.path, pool_path) or held_layout == pool_layout:
+                raise ConfigError(
+                    f"held-out map {held.label!r} ({held.path}) is also a training map of phase {phase_name!r} "
+                    f"({pool_path}): the held-out maps must be maps the policy never trains on"
+                )
+
+
+def flatten_scalars(results: dict[str, Any], extras: dict[str, Any]) -> dict[str, float]:
+    """The numbers worth plotting from an evaluation, as ``{tag: float}`` (TensorBoard-style tags)."""
+    out: dict[str, float] = {}
+    wins, stays = [], []
+    for label, block in results.items():
+        s = block["all"]
+        out[f"eval/win_rate/{label}"] = s["win"]["rate"]
+        out[f"eval/draw_rate/{label}"] = s["draw"]["rate"]
+        out[f"eval/loss_rate/{label}"] = s["loss"]["rate"]
+        wins.append(s["win"]["rate"])
+        stays.append(s["stay_fraction"]["all"])
+    if wins:
+        out["eval/mean_win_rate"] = sum(wins) / len(wins)
+        out["eval/min_win_rate"] = min(wins)
+        out["eval/stay_fraction"] = sum(stays) / len(stays)
+    held = extras.get("held_out")
+    if held:
+        all_wins = []
+        for map_label, per_opp in held.items():
+            map_wins = [b["all"]["win"]["rate"] for b in per_opp.values()]
+            out[f"eval_held_out/{map_label}/win_rate"] = sum(map_wins) / len(map_wins)
+            all_wins += map_wins
+        out["eval_held_out/mean_win_rate"] = sum(all_wins) / len(all_wins)
+    swap = extras.get("role_swap")
+    if swap and swap["all"]["rate"] is not None:
+        # Report only: an untrained network already changes most actions when roles are swapped (docs/evaluation.md),
+        # so these curves show that the role input is used, not that roles are specialised well.
+        out["eval/role_swap_changed"] = swap["all"]["rate"]
+        for pair, stat in swap["pairs"].items():
+            out[f"eval/role_swap/{pair}"] = stat["rate"]
+    check = extras.get("policy_check")
+    if check:
+        diffs = [c["win_difference"]["diff"] for c in check.values() if c["win_difference"]["diff"] is not None]
+        if diffs:
+            out["eval/argmax_minus_sampled_win"] = sum(diffs) / len(diffs)
+    return {k: float(v) for k, v in out.items() if v is not None}
+
+
+def validate_eval_opponents(eval_cfg: EvalConfig, env_config: CTFConfig) -> None:
+    """Build every opponent the evaluation will play once, on the environments it will play on.
+
+    A bad opponent (``source: league``, which an evaluation cannot play; a missing or incompatible checkpoint file;
+    a role-count mismatch; an invalid minimax or scripted parameter; an unreadable held-out map) would otherwise
+    only fail at the first evaluation, hours into a run, and again at every later one. Raises ``ConfigError``
+    naming the opponent. Nothing is played: each opponent is built and dropped.
+    """
+    targets: list[tuple[str, CTFConfig, list]] = []
+    for fixed in (True, False):  # the two spawn styles of the main evaluation differ only in spawn cells
+        targets.append((
+            "main evaluation" + (" (fixed spawns)" if fixed else ""),
+            eval_env_config(env_config, eval_cfg.env_overrides, fixed_spawns=fixed),
+            list(eval_cfg.opponents),
+        ))
+    held = eval_cfg.held_out
+    by_label = {o.label: o for o in eval_cfg.opponents}
+    for m in held.maps:
+        try:
+            map_config = held_out_env_config(env_config, m.path)  # fails on a missing / wrong-sized map file
+        except ConfigError as exc:
+            raise ConfigError(f"noise_free_eval: held-out map {m.label!r}: {exc}") from exc
+        except OSError as exc:
+            raise ConfigError(f"noise_free_eval: held-out map {m.label!r} cannot be read: {exc}") from exc
+        targets.append((f"held-out map {m.label!r}", map_config, [by_label[lab] for lab in held.opponents]))
+    for where, config, opponents in targets:
+        for spec in opponents:
+            try:
+                build_eval_opponent(spec, config, Random(0))
+            except ConfigError as exc:
+                raise ConfigError(f"noise_free_eval: opponent {spec.label!r} (kind {spec.kind}) is invalid for the {where}: {exc}") from exc
+            except Exception as exc:  # noqa: BLE001 - a missing file, a bad checkpoint, anything: stop the run now
+                raise ConfigError(
+                    f"noise_free_eval: opponent {spec.label!r} (kind {spec.kind}) cannot be built for the {where}: "
+                    f"{type(exc).__name__}: {exc}"
+                ) from exc
+
+
+class NoiseFreeEvaluator:
+    def __init__(self, cfg: RLConfig, env_config: CTFConfig, run_dir: Path, root: Path | None = None) -> None:
+        self.cfg, self.env_config, self.run_dir = cfg, env_config, run_dir
+        self.eval_cfg = load_training_eval_config(cfg, root if root is not None else Path.cwd())
+        validate_eval_opponents(self.eval_cfg, env_config)  # fail at startup, not at the first evaluation
+
+    def run(
+        self, model: ActorCritic, value_norm: ValueNorm, total_steps: int, device: torch.device
+    ) -> tuple[dict[str, float], dict[str, Any]]:
+        """Evaluate the live model; returns (scalars for the log, full report). Training state is untouched:
+        the model's train/eval mode is restored and the evaluation uses its own random generators."""
+        was_training = model.training
+        t0 = time.time()
+        try:
+            strategy = RLStrategy(
+                model, self.cfg, self.env_config, value_norm, seed=self.eval_cfg.seed, device=device,
+                deterministic=self.eval_cfg.policy_mode is PolicyMode.ARGMAX,
+            )
+            roles = list(strategy.roles)
+            results = evaluate_policy(strategy, roles, self.env_config, self.eval_cfg)
+            extras = evaluate_extras(strategy, roles, self.env_config, self.eval_cfg)
+        finally:
+            model.train(was_training)
+        seconds = time.time() - t0
+        scalars = flatten_scalars(results, extras)
+        scalars["eval/seconds"] = seconds
+        report = {
+            "meta": {
+                "step": int(total_steps),
+                "seconds": round(seconds, 1),
+                "eval_config": to_dict(self.eval_cfg),
+                "env_config": config_to_dict(self.env_config),
+            },
+            "results": results,
+            **extras,
+        }
+        return scalars, report
+
+    def save(self, report: dict[str, Any], total_steps: int) -> Path:
+        out = self.run_dir / "eval" / f"step_{total_steps:010d}.json"
+        out.parent.mkdir(parents=True, exist_ok=True)
+        out.write_text(json.dumps(report, indent=2), encoding="utf-8")
+        return out
+
+    @staticmethod
+    def summary(scalars: dict[str, float]) -> str:
+        parts = [f"mean win {scalars.get('eval/mean_win_rate', float('nan')):.2f}",
+                 f"min {scalars.get('eval/min_win_rate', float('nan')):.2f}"]
+        if "eval_held_out/mean_win_rate" in scalars:
+            parts.append(f"held-out {scalars['eval_held_out/mean_win_rate']:.2f}")
+        return " | ".join(parts) + f" | {scalars['eval/seconds']:.0f}s"

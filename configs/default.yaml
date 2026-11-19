@@ -1,10 +1,32 @@
+# Default environment configuration.
+# Every key is listed explicitly; omitted keys fall back to the defaults declared
+# in src/ctf/config.py. Unknown keys are rejected on load.
+
+# --- grid and rules -----------------------------------------------------------
 width: 11
 height: 7
 agents_per_team: 3
 tagging_enabled: true
 max_episode_steps: 200
+
+# --- reproducibility ----------------------------------------------------------
+# Seeds the environment's private RNG at construction. env.reset(seed=...) reseeds it.
+# Only matters when spawn_mode is not "fixed"; step() itself is always deterministic.
 seed: 42
 
+# --- partial observability ----------------------------------------------------
+# Manhattan radius within which a team sees enemies / the enemy flag.
+visibility_radius: 3
+
+# --- spawning -----------------------------------------------------------------
+# fixed      use red_spawns / blue_spawns below (or the cells nearest the base)
+# shuffle    same cells, randomly re-assigned among the team's agents each episode
+# near_base  random distinct home-zone cells within spawn_radius of the base
+spawn_mode: fixed
+spawn_radius: 3          # used by near_base
+spawn_allow_base: true   # near_base: may an agent start on its own flag cell?
+
+# --- map ----------------------------------------------------------------------
 red_base: [1, 3]
 blue_base: [9, 3]
 
@@ -24,3 +46,19 @@ obstacles:
   - [5, 3]
   - [5, 4]
   - [5, 5]
+
+# --- flag rules ---------------------------------------------------------------
+# These keys default to the ORIGINAL rules; configs/ctf_v2.yaml turns the new rules on.
+# carrier_slots: 1-based team slots (R1/B1 = slot 1) that may pick up and carry the enemy flag.
+#   null = every agent may. Other agents standing on a flag do nothing.
+carrier_slots: null
+# tagging_rule: any_enemy = one active enemy on the carrier's cell tags it.
+#               headcount = active enemies on the cell must outnumber the active friendly
+#                           non-carrier agents on that cell.
+tagging_rule: any_enemy
+# drop_flag_on_tag: true = a tagged carrier's flag stays on that cell (status DROPPED);
+#                   false = it goes back to its base. The tagged carrier is eliminated either way.
+drop_flag_on_tag: false
+# Only used when drop_flag_on_tag is true:
+dropped_flag_enemy_pickup: true      # an eligible enemy may pick the dropped flag up again
+dropped_flag_return_on_touch: true   # an active agent of the flag's own team on it sends it home

@@ -6,13 +6,14 @@ from dataclasses import dataclass, replace
 from enum import Enum
 
 from ctf.agent import Agent, Team
-from ctf.config import CTFConfig
+from ctf.config import DEFAULT_VISIBILITY_RADIUS, CTFConfig
 from ctf.map import GridMap
 
 
 class FlagStatus(str, Enum):
     AT_BASE = "AT_BASE"
     CARRIED = "CARRIED"
+    DROPPED = "DROPPED"  # lying on the cell where its carrier was tagged (only with drop_flag_on_tag)
 
 
 @dataclass(frozen=True)
@@ -39,6 +40,9 @@ class Flag:
             carrier_id=carrier_id,
         )
 
+    def with_dropped(self, x: int, y: int) -> "Flag":
+        return Flag(team=self.team, status=FlagStatus.DROPPED, x=x, y=y, carrier_id=None)
+
     def with_position(self, x: int, y: int) -> "Flag":
         return replace(self, x=x, y=y)
 
@@ -55,14 +59,24 @@ class GameState:
     terminated: bool = False
     truncation: bool = False
     tagging_enabled: bool = True
+    visibility_radius: int = DEFAULT_VISIBILITY_RADIUS
 
     @classmethod
-    def initial(cls, config: CTFConfig) -> "GameState":
+    def initial(
+        cls,
+        config: CTFConfig,
+        *,
+        red_spawns: list[tuple[int, int]] | None = None,
+        blue_spawns: list[tuple[int, int]] | None = None,
+    ) -> "GameState":
+        """Fresh state. Spawns default to the config's deterministic spawns."""
         grid = GridMap.from_config(config)
+        red_spawns = config.default_spawns(Team.RED) if red_spawns is None else red_spawns
+        blue_spawns = config.default_spawns(Team.BLUE) if blue_spawns is None else blue_spawns
         agents: dict[str, Agent] = {}
-        for i, (x, y) in enumerate(config.default_spawns(Team.RED), start=1):
+        for i, (x, y) in enumerate(red_spawns, start=1):
             agents[f"R{i}"] = Agent(f"R{i}", Team.RED, x, y)
-        for i, (x, y) in enumerate(config.default_spawns(Team.BLUE), start=1):
+        for i, (x, y) in enumerate(blue_spawns, start=1):
             agents[f"B{i}"] = Agent(f"B{i}", Team.BLUE, x, y)
 
         flags = {
@@ -86,18 +100,8 @@ class GameState:
             red_base=config.red_base,
             blue_base=config.blue_base,
             tagging_enabled=config.tagging_enabled,
+            visibility_radius=config.visibility_radius,
         )
 
     def copy(self) -> "GameState":
-        return GameState(
-            grid=self.grid,
-            agents=dict(self.agents),
-            flags={k: v for k, v in self.flags.items()},
-            red_base=self.red_base,
-            blue_base=self.blue_base,
-            timestep=self.timestep,
-            winner=self.winner,
-            terminated=self.terminated,
-            truncation=self.truncation,
-            tagging_enabled=self.tagging_enabled,
-        )
+        return replace(self, agents=dict(self.agents), flags=dict(self.flags))

@@ -1,0 +1,167 @@
+# Viewer configuration: look, layout, playback and key bindings. EVERY key is required.
+# Colours are #rrggbb. Edit freely; unknown keys and bad values are rejected on start-up.
+
+window:
+  width: 1360
+  height: 800
+  fps: 60
+  title: "CTF Viewer"
+  resizable: true
+
+layout:
+  margin: 12
+  panel_width: 410          # right-hand information panel
+  header_height: 46
+  timeline_height: 74
+
+fonts:
+  family: arial             # system font; falls back to pygame's default if missing
+  title_size: 22
+  label_size: 15
+  small_size: 13
+  tiny_size: 11
+
+palette:
+  background: "#12151a"
+  panel: "#1b2027"
+  panel_alt: "#222932"
+  border: "#303945"
+  text: "#e9edf2"
+  text_dim: "#98a4b1"
+  accent: "#ffcc4d"
+  grid_line: "#2b333d"
+  floor: "#1f252d"
+  floor_alt: "#222930"
+  wall: "#4b5462"
+  wall_edge: "#7a8696"
+  win: "#4cd37b"
+  loss: "#ff5d55"
+  draw: "#a3abb7"
+  warn: "#ffb020"
+  fog: "#05070a"
+
+teams:
+  red:  {name: RED,  color: "#e5484d", dark: "#6f2326", light: "#ff9aa0"}
+  blue: {name: BLUE, color: "#3e8ef7", dark: "#1e3f73", light: "#9cc4ff"}
+
+roles:
+  attacker: {label: Attacker, letter: A, color: "#ff9f1c"}
+  defender: {label: Defender, letter: D, color: "#2ec4b6"}
+  scout:    {label: Scout,    letter: S, color: "#c77dff"}
+  unknown:  {label: Agent,    letter: "?", color: "#8d99a6"}
+
+board:
+  agent_radius: 0.30        # fraction of a cell
+  ring_width: 4
+  flag_scale: 0.9
+  trail_length: 14
+  trail_alpha: 150
+  fog_unseen_alpha: 215     # never seen by the viewed team
+  fog_memory_alpha: 120     # seen before, not visible now
+  belief_max_alpha: 190
+  vision_alpha: 26
+  arrow_scale: 0.42
+  event_flash_seconds: 0.8
+  min_label_cell: 64        # below this cell size only the role letter is drawn
+
+overlays:                    # what is switched on when the viewer opens
+  fog: false
+  belief: false
+  vision: false
+  trails: true
+  probabilities: true
+  arrows: true
+  labels: true
+  coordinates: false
+  spawns: false
+  view_team: none            # red | blue | none (none = show everything)
+
+playback:
+  speeds: [0.5, 1, 2, 4, 8, 16, 32]   # environment steps per second
+  default_speed_index: 2
+  autoloop: false
+  live_start_playing: true
+
+paths:
+  output_dir: outputs/viz
+  maps_dir: configs/maps
+  controllers_file: configs/viz/controllers.yaml
+  default_map: configs/maps/default.yaml
+
+report:
+  smoothing_window: 25       # updates averaged in training-report curves
+  figure_width: 17
+  figure_height: 13
+  dpi: 110
+  tail_updates: 60           # "final performance" = mean over the last N updates
+
+timelapse:
+  panel_width: 560
+  panel_height: 400
+  fps: 6
+  hold_final_frames: 8
+  columns: 3
+  title_height: 54
+
+export:
+  fps: 6
+  width: 1360
+  height: 800
+
+editor:
+  min_size: 5
+  max_size: 25
+
+keys:
+  quit: "escape"
+  help: "h"
+  play_pause: "space"
+  step_forward: "right"
+  step_back: "left"
+  jump_start: "home"
+  jump_end: "end"
+  speed_up: "up"
+  speed_down: "down"
+  next_event: "."
+  prev_event: ","
+  toggle_fog: "f"
+  toggle_belief: "b"
+  toggle_vision: "v"
+  toggle_trails: "t"
+  toggle_probabilities: "p"
+  toggle_arrows: "a"
+  toggle_labels: "l"
+  toggle_coordinates: "c"
+  toggle_spawns: "x"
+  cycle_view_team: "tab"
+  next_agent: "n"
+  prev_agent: "m"
+  deselect: "backspace"
+  new_episode: "r"
+  new_seed: "return"
+  swap_sides: "w"
+  cycle_red_controller: "f1"
+  cycle_blue_controller: "f2"
+  toggle_autoloop: "o"
+  toggle_edit: "e"
+  tool_wall: "1"
+  tool_erase: "2"
+  tool_red_base: "3"
+  tool_blue_base: "4"
+  tool_red_spawn: "5"
+  tool_blue_spawn: "6"
+  toggle_mirror: "g"
+  grow_width: "]"
+  shrink_width: "["
+  grow_height: "="
+  shrink_height: "-"
+  clear_map: "delete"
+  validate_map: "u"
+  save_map: "s"
+  next_map: "page down"
+  prev_map: "page up"
+  play_on_map: "k"
+  screenshot: "f12"
+  export_gif: "f9"
+  export_mp4: "f10"
+  save_recording: "f11"
